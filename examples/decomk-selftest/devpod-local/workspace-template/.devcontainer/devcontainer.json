@@ -4,6 +4,6 @@
     "dockerfile": "Dockerfile",
     "context": ".."
   },
-  "remoteUser": "root",
+  "remoteUser": "dev",
   "postCreateCommand": "bash .devcontainer/postCreateCommand.sh"
 }

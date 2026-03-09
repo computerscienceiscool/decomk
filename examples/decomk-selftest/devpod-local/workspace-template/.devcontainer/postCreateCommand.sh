@@ -11,6 +11,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 workspace_root="$(cd "$script_dir/.." && pwd)"
 scenario_file="$script_dir/SELFTEST_SCENARIO"
 bootstrap_script="$workspace_root/examples/devcontainer/postCreateCommand.sh"
+go_bin_dir="/usr/local/go/bin"
 
 if [[ ! -f "$scenario_file" ]]; then
   echo "missing scenario file: $scenario_file" >&2
@@ -112,6 +113,7 @@ run_bootstrap_as_dev() {
 #!/usr/bin/env bash
 set -euo pipefail
 cd $(printf '%q' "$workspace_root")
+export PATH=$(printf '%q' "$go_bin_dir"):\$PATH
 export DECOMK_HOME=$(printf '%q' "$DECOMK_HOME")
 export DECOMK_LOG_DIR=$(printf '%q' "$DECOMK_LOG_DIR")
 export DECOMK_TOOL_REPO=$(printf '%q' "$DECOMK_TOOL_REPO")
@@ -128,6 +130,37 @@ RUNNER
   chmod +x "$runner_script"
 
   if /usr/bin/sudo -n -u dev -- /bin/bash "$runner_script"; then
+    exit_code=0
+  else
+    exit_code=$?
+  fi
+
+  rm -f "$runner_script"
+  return "$exit_code"
+}
+
+run_bootstrap_as_root() {
+  local runner_script
+  local exit_code
+
+  runner_script="$(mktemp /tmp/decomk-selftest-root-runner.XXXXXX.sh)"
+
+  cat > "$runner_script" <<RUNNER
+#!/usr/bin/env bash
+set -euo pipefail
+cd $(printf '%q' "$workspace_root")
+export PATH=$(printf '%q' "$go_bin_dir"):\$PATH
+export DECOMK_HOME=$(printf '%q' "$DECOMK_HOME")
+export DECOMK_LOG_DIR=$(printf '%q' "$DECOMK_LOG_DIR")
+export DECOMK_TOOL_REPO=$(printf '%q' "$DECOMK_TOOL_REPO")
+export DECOMK_CONF_REPO=$(printf '%q' "$DECOMK_CONF_REPO")
+export GITHUB_USER='dev'
+bash $(printf '%q' "$bootstrap_script")
+RUNNER
+
+  chmod +x "$runner_script"
+
+  if /usr/bin/sudo -n -- /bin/bash "$runner_script"; then
     exit_code=0
   else
     exit_code=$?
@@ -155,15 +188,7 @@ validate_success_common() {
 }
 
 run_scenario_root_hook_owner_inferred() {
-  (
-    cd "$workspace_root"
-    export DECOMK_HOME
-    export DECOMK_LOG_DIR
-    export DECOMK_TOOL_REPO
-    export DECOMK_CONF_REPO
-    export GITHUB_USER="dev"
-    bash "$bootstrap_script"
-  )
+  run_bootstrap_as_root
 
   validate_success_common "root"
 }
@@ -182,6 +207,21 @@ exit 1
 FAKESUDO
   chmod +x "$fake_sudo_dir/sudo"
   printf '%s\n' "$fake_sudo_dir"
+}
+
+create_fixture_tool_repo() {
+  local tool_repo_dir
+  tool_repo_dir="/tmp/decomk-selftest-toolrepo-$scenario_name"
+
+  rm -rf "$tool_repo_dir"
+
+  # Intent: Provide bootstrap with a dedicated bare tool repo fixture instead of
+  # cloning directly from the mounted workspace checkout, which avoids git
+  # safe.directory ownership checks in root-hook simulation scenarios.
+  # Source: DI-007-20260309-124345 (TODO/007)
+  git clone -q --bare "$workspace_root/.git" "$tool_repo_dir"
+
+  printf '%s\n' "$tool_repo_dir"
 }
 
 run_scenario_no_sudo_expect_fail() {
@@ -215,7 +255,7 @@ run_scenario_no_sudo_make_as_user() {
 main() {
   export DECOMK_HOME="$state_root/home"
   export DECOMK_LOG_DIR="$state_root/log"
-  export DECOMK_TOOL_REPO="$workspace_root"
+  export DECOMK_TOOL_REPO="$(create_fixture_tool_repo)"
   export DECOMK_CONF_REPO="$(create_fixture_conf_repo)"
 
   case "$scenario_name" in

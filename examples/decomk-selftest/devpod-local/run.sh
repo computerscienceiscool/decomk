@@ -73,7 +73,12 @@ cleanup() {
   for workspace_name in "${active_workspaces[@]:-}"; do
     cleanup_workspace "$workspace_name"
   done
-  rm -rf "$temp_root"
+  if ! rm -rf "$temp_root"; then
+    # Intent: Keep reruns ergonomic by attempting privileged cleanup when prior
+    # container operations leave root-owned files in the temporary workspace.
+    # Source: DI-007-20260309-124345 (TODO/007)
+    sudo -n rm -rf "$temp_root" 2>/dev/null || true
+  fi
 }
 trap cleanup EXIT
 
@@ -83,19 +88,21 @@ run_devpod_up() {
   local workspace_name="$1"
   local workspace_source="$2"
 
-  # Intent: Prefer the modern "name + --source" form, but keep a backward-
-  # compatible fallback in case the local DevPod CLI expects "source + --id".
+  # Intent: Use one source-first invocation form so hook failures are reported
+  # once and not obscured by a second retry with reordered arguments.
   # Source: DI-007-20260309-124345 (TODO/007)
-  if devpod up "$workspace_name" --source "$workspace_source" --ide none; then
-    return 0
-  fi
-
   devpod up "$workspace_source" --id "$workspace_name" --ide none
 }
 
 for scenario_name in "${scenario_list[@]}"; do
   workspace_copy="$temp_root/workspace-$scenario_name"
-  workspace_name="decomk-selftest-${scenario_name}-$(date +%s)-$$"
+  # Intent: DevPod workspace ids must be lowercase alnum/dash; scenario names
+  # use underscores and long labels, so normalize and shorten here to satisfy
+  # DevPod's 48-character workspace-name limit.
+  # Source: DI-007-20260309-124345 (TODO/007)
+  workspace_slug="$(printf '%s' "$scenario_name" | tr '_' '-')"
+  workspace_short="${workspace_slug:0:16}"
+  workspace_name="dst-${workspace_short}-$(date +%s)-$$"
 
   log "preparing scenario: $scenario_name"
   run_logged mkdir -p "$workspace_copy"
