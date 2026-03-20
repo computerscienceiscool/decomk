@@ -6,12 +6,12 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$script_dir/lib.sh"
 
 # Intent: Prove stage-0 bootstrap pulled decomk from the harness git server by
-# asserting DECOMK_HOME/decomk exists as a git repo with the expected origin.
+# asserting DECOMK_HOME/src/decomk exists as a git repo with the expected origin.
 # Source: DI-007-20260311-145221 (TODO/007)
 selftest_require_env DECOMK_HOME
 selftest_require_env DECOMK_TOOL_REPO
 
-tool_repo_dir="$DECOMK_HOME/decomk"
+tool_repo_dir="$DECOMK_HOME/src/decomk"
 selftest_require_file "$tool_repo_dir/cmd/decomk/main.go"
 
 if [[ ! -d "$tool_repo_dir/.git" ]]; then

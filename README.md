@@ -201,6 +201,12 @@ export DECOMK_PACKAGES='Block00_base Block10_common Block20_go'
 ...
 ```
 
+`env.sh` is not debug-only: decomk builds one canonical env tuple sequence and
+uses it for both `env.sh` generation and make invocation, so make and child
+processes receive the same effective values.
+This includes `PATH`: if a tuple sets `PATH=...`, that value applies to make
+launcher resolution and to recipe child processes.
+
 ## Concepts
 
 ### Context
@@ -391,6 +397,13 @@ the step has succeeded.
   - Single quotes may be used to include spaces inside a token:
     - `FOO='bar baz'` parses as one token `FOO=bar baz`
   - Backslash escapes the next rune when not in single quotes.
+  - `NAME=$` is a passthrough sentinel for tuples:
+    - if incoming env contains `NAME`, decomk uses that value
+    - else if an earlier tuple already set `NAME`, decomk keeps that fallback
+    - else decomk fails fast
+- Incoming `DECOMK_*` environment variables are automatically carried into the
+  canonical env export/make contract (unless later tuple/computed values
+  override them).
 
 ## Makefile expectations and example
 

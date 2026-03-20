@@ -314,7 +314,19 @@ func cmdExecute(args []string, stdout, stderr io.Writer, mode executionMode) (in
 		return 1, fmt.Errorf("no Makefile found; use -makefile to set an explicit path")
 	}
 
+	// Intent: Resolve passthrough tuples and build one canonical env tuple stream
+	// once per invocation so env.sh and make receive the same effective values.
+	// Source: DI-001-20260313-224000 (TODO/001)
+	incomingEnvList := os.Environ()
+	incomingEnv := envMapFromList(incomingEnvList)
+	resolvedTuples, err := resolveTuplePassThroughs(plan.Tuples, incomingEnv)
+	if err != nil {
+		return 1, err
+	}
+	plan.Tuples = resolvedTuples
+
 	targets, targetSource := selectTargets(plan.Targets, plan.Tuples, actionArgs)
+	cookedTuples := canonicalEnvTuples(plan, targets, makeAsRoot, incomingEnv)
 
 	if mode.DryRun {
 		warnIfRunRequiresPasswordlessSudo(makeAsRoot, stderr)
@@ -329,7 +341,7 @@ func cmdExecute(args []string, stdout, stderr io.Writer, mode executionMode) (in
 		printPlan(stdout, plan, actionArgs, targets, targetSource)
 		fmt.Fprintln(stdout)
 		fmt.Fprintln(stdout, "env exports (dry-run; not written):")
-		if err := writeEnvExport(stdout, plan, targets, makeAsRoot); err != nil {
+		if err := writeEnvExport(stdout, plan, cookedTuples); err != nil {
 			return 1, err
 		}
 	}
@@ -366,12 +378,12 @@ func cmdExecute(args []string, stdout, stderr io.Writer, mode executionMode) (in
 	}
 
 	if mode.WriteEnv {
-		if err := writeEnvFile(plan.EnvFile, plan, targets, makeAsRoot); err != nil {
+		if err := writeEnvFile(plan.EnvFile, plan, cookedTuples); err != nil {
 			return 1, err
 		}
 	}
 
-	makeTuples, makeEnv := makeInvocation(plan, targets, makeAsRoot)
+	makeTuples, makeEnv := makeInvocation(incomingEnvList, cookedTuples)
 
 	out := stdout
 	errOut := stderr
@@ -577,6 +589,16 @@ func rewriteCFlag(args []string, absStartDir string) []string {
 }
 
 const defaultWorkspacesDir = "/workspaces"
+
+const (
+	// tuplePassThroughValue is the reserved tuple value that requests environment
+	// pass-through resolution (for example `BAX=$`).
+	tuplePassThroughValue = "$"
+
+	// autoPassThroughPrefix is the env-var namespace that decomk automatically
+	// carries into env.sh/make, in addition to resolved config tuples.
+	autoPassThroughPrefix = "DECOMK_"
+)
 
 // resolveLogRoot determines where decomk should write per-run logs.
 //
@@ -1287,6 +1309,112 @@ func selectTargets(configTargets, tuples, actionArgs []string) (targets []string
 	return nil, "makeDefaultGoal"
 }
 
+// envMapFromList converts KEY=value strings into a map where the last entry for
+// each key wins.
+func envMapFromList(envList []string) map[string]string {
+	out := make(map[string]string, len(envList))
+	for _, kv := range envList {
+		k, v, ok := strings.Cut(kv, "=")
+		if !ok || k == "" {
+			continue
+		}
+		out[k] = v
+	}
+	return out
+}
+
+// resolveTuplePassThroughs rewrites `NAME=$` tuples to concrete `NAME=value`
+// assignments.
+//
+// Resolution rules:
+//   - if NAME exists in incomingEnv, use that value
+//   - else if an earlier tuple already set NAME, reuse that prior value
+//   - else fail fast (no implicit empty-string fallback)
+//
+// Intent: Make env.sh authoritative by resolving passthrough tuples before both
+// env export generation and make invocation, so both receive the same final
+// values.
+// Source: DI-001-20260313-224000 (TODO/001)
+func resolveTuplePassThroughs(tuples []string, incomingEnv map[string]string) ([]string, error) {
+	out := make([]string, 0, len(tuples))
+	effective := make(map[string]string, len(tuples))
+	for _, tuple := range tuples {
+		name, value, ok := resolve.SplitTuple(tuple)
+		if !ok {
+			out = append(out, tuple)
+			continue
+		}
+		if value == tuplePassThroughValue {
+			if envValue, envOK := incomingEnv[name]; envOK {
+				value = envValue
+			} else if prior, priorOK := effective[name]; priorOK {
+				value = prior
+			} else {
+				return nil, fmt.Errorf("tuple %s=%s requires %s in environment or a prior tuple fallback", name, tuplePassThroughValue, name)
+			}
+			tuple = name + "=" + value
+		}
+		effective[name] = value
+		out = append(out, tuple)
+	}
+	return out, nil
+}
+
+// autoPassThroughTuples returns sorted NAME=value tuples for incoming env vars in
+// the DECOMK_* namespace.
+//
+// Only identifier-like keys are emitted so generated entries are valid make
+// command-line variable assignments.
+//
+// Intent: Carry devcontainer-provided DECOMK_* configuration into env.sh and the
+// make process tree by default, without requiring explicit tuple duplication in
+// decomk.conf.
+// Source: DI-001-20260313-224000 (TODO/001)
+func autoPassThroughTuples(incomingEnv map[string]string) []string {
+	var names []string
+	for name := range incomingEnv {
+		if !strings.HasPrefix(name, autoPassThroughPrefix) {
+			continue
+		}
+		// Keep only names that are valid NAME=value tuple identifiers.
+		if _, _, ok := resolve.SplitTuple(name + "=x"); !ok {
+			continue
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	out := make([]string, 0, len(names))
+	for _, name := range names {
+		out = append(out, name+"="+incomingEnv[name])
+	}
+	return out
+}
+
+// canonicalEnvTuples returns the exact tuple sequence decomk treats as the
+// authoritative environment contract.
+//
+// The resulting order is:
+//   - incoming DECOMK_* pass-through tuples
+//   - resolved config tuples
+//   - decomk-computed tuples (last, so they override prior values)
+//
+// This single sequence feeds both env.sh generation and make invocation to keep
+// runtime behavior deterministic.
+func canonicalEnvTuples(plan *resolvedPlan, targets []string, makeAsRoot bool, incomingEnv map[string]string) []string {
+	out := make([]string, 0, len(incomingEnv)+len(plan.Tuples)+len(computedVarOrder))
+	out = append(out, autoPassThroughTuples(incomingEnv)...)
+	out = append(out, plan.Tuples...)
+
+	cv := computedVars(plan, targets, makeAsRoot)
+	for _, name := range computedVarOrder {
+		if v, ok := cv[name]; ok {
+			out = append(out, name+"="+v)
+		}
+	}
+	return out
+}
+
 // effectiveTupleValues returns the "last wins" values for NAME=value tuples.
 //
 // This mirrors make's command-line variable precedence: if the same variable
@@ -1380,27 +1508,17 @@ func findDefaultMakefile(home, explicitConfig string) string {
 	return ""
 }
 
-// makeInvocation returns the tuple list and environment slice for invoking make.
+// makeInvocation returns the tuple list and process env slice used to invoke
+// make.
 //
-// This is shared by plan (make -n) and run (real make) so both paths agree on
-// which computed variables are exported.
-func makeInvocation(plan *resolvedPlan, targets []string, makeAsRoot bool) (tuples []string, env []string) {
-	tuples = append([]string(nil), plan.Tuples...)
-
-	// Append computed variables last so they override any config-provided tuples
-	// with the same NAME. This mirrors isconf's "last wins" make argv behavior and
-	// ensures decomk-owned variables are trustworthy.
-	//
-	// Note: some values contain spaces (e.g. DECOMK_PACKAGES). This is safe: argv
-	// elements are not re-split by spaces when exec'd.
-	cv := computedVars(plan, targets, makeAsRoot)
-	for _, name := range computedVarOrder {
-		if v, ok := cv[name]; ok {
-			tuples = append(tuples, name+"="+v)
-		}
-	}
-
-	env = withEnv(os.Environ(), cv)
+// cookedTuples is the canonical environment contract shared with env.sh export.
+func makeInvocation(baseEnv, cookedTuples []string) (tuples []string, env []string) {
+	tuples = append([]string(nil), cookedTuples...)
+	// Intent: Keep one PATH model by deriving the launcher process env from the
+	// same cooked tuple contract that drives env.sh and make argv, even when that
+	// means tuple-provided PATH values can affect launcher behavior.
+	// Source: DI-001-20260313-174538 (TODO/001)
+	env = withEnv(baseEnv, effectiveTupleValues(cookedTuples))
 	return tuples, env
 }
 
@@ -1409,7 +1527,7 @@ func makeInvocation(plan *resolvedPlan, targets []string, makeAsRoot bool) (tupl
 //
 // This file is intentionally simple: it is designed to be sourced by scripts
 // and nested make invocations without requiring eval.
-func writeEnvFile(path string, plan *resolvedPlan, targets []string, makeAsRoot bool) error {
+func writeEnvFile(path string, plan *resolvedPlan, cookedTuples []string) error {
 	if err := state.EnsureParentDir(path); err != nil {
 		return err
 	}
@@ -1420,7 +1538,7 @@ func writeEnvFile(path string, plan *resolvedPlan, targets []string, makeAsRoot 
 		return err
 	}
 
-	if err := writeEnvExport(f, plan, targets, makeAsRoot); err != nil {
+	if err := writeEnvExport(f, plan, cookedTuples); err != nil {
 		_ = f.Close()
 		return err
 	}
@@ -1435,7 +1553,7 @@ func writeEnvFile(path string, plan *resolvedPlan, targets []string, makeAsRoot 
 // The output format is a POSIX-shell-friendly sequence of "export NAME='value'"
 // lines, optionally preceded by comment lines. It is safe to "source" this file
 // in a shell or make recipe.
-func writeEnvExport(w io.Writer, plan *resolvedPlan, targets []string, makeAsRoot bool) error {
+func writeEnvExport(w io.Writer, plan *resolvedPlan, cookedTuples []string) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	fmt.Fprintf(w, "# generated by decomk; do not edit\n")
 	fmt.Fprintf(w, "# time: %s\n", now)
@@ -1452,23 +1570,15 @@ func writeEnvExport(w io.Writer, plan *resolvedPlan, targets []string, makeAsRoo
 	fmt.Fprintf(w, "# config: %s\n", strings.Join(plan.ConfigPaths, ", "))
 	fmt.Fprintln(w)
 
-	// Export config-provided tuples first.
-	//
-	// computedVars are emitted later and override any config-provided entries with
-	// the same variable name.
-	for _, t := range plan.Tuples {
+	// Intent: Export the same tuple sequence used for make invocation so env.sh is
+	// the exact contract for what make and child processes receive.
+	// Source: DI-001-20260313-224000 (TODO/001)
+	for _, t := range cookedTuples {
 		k, v, ok := resolve.SplitTuple(t)
 		if !ok {
 			continue
 		}
 		writeExport(w, k, v)
-	}
-
-	// Export computed helpers for recipes/scripts last so they override any
-	// config-provided values.
-	cv := computedVars(plan, targets, makeAsRoot)
-	for _, name := range computedVarOrder {
-		writeExport(w, name, cv[name])
 	}
 	return nil
 }

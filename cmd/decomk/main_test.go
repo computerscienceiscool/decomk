@@ -128,6 +128,140 @@ func TestSelectTargets(t *testing.T) {
 	}
 }
 
+func TestResolveTuplePassThroughs(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name    string
+		tuples  []string
+		env     map[string]string
+		want    []string
+		wantErr string
+	}{
+		{
+			name:   "uses incoming env value",
+			tuples: []string{"BAX=27", "BAX=$", "OTHER=x"},
+			env: map[string]string{
+				"BAX": "42",
+			},
+			want: []string{"BAX=27", "BAX=42", "OTHER=x"},
+		},
+		{
+			name:   "uses prior tuple fallback when env is unset",
+			tuples: []string{"BAX=27", "BAX=$"},
+			env:    map[string]string{},
+			want:   []string{"BAX=27", "BAX=27"},
+		},
+		{
+			name:    "fails when env is unset and no fallback tuple exists",
+			tuples:  []string{"BAX=$"},
+			env:     map[string]string{},
+			wantErr: "tuple BAX=$ requires BAX in environment or a prior tuple fallback",
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := resolveTuplePassThroughs(tc.tuples, tc.env)
+			if tc.wantErr != "" {
+				if err == nil {
+					t.Fatalf("resolveTuplePassThroughs() error: got nil want %q", tc.wantErr)
+				}
+				if !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("resolveTuplePassThroughs() error: got %q want substring %q", err.Error(), tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("resolveTuplePassThroughs() error: %v", err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("resolveTuplePassThroughs() tuples: got %#v want %#v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestSelectTargets_PassthroughInstallTuple(t *testing.T) {
+	t.Parallel()
+
+	tuples, err := resolveTuplePassThroughs(
+		[]string{"INSTALL=$"},
+		map[string]string{"INSTALL": "install-neovim install-codex"},
+	)
+	if err != nil {
+		t.Fatalf("resolveTuplePassThroughs(): %v", err)
+	}
+
+	gotTargets, gotSource := selectTargets(nil, tuples, nil)
+	wantTargets := []string{"install-neovim", "install-codex"}
+	if gotSource != "defaultINSTALL" {
+		t.Fatalf("source: got %q want %q", gotSource, "defaultINSTALL")
+	}
+	if !reflect.DeepEqual(gotTargets, wantTargets) {
+		t.Fatalf("targets: got %#v want %#v", gotTargets, wantTargets)
+	}
+}
+
+func TestCanonicalEnvTuplesAndMakeInvocationParity(t *testing.T) {
+	t.Parallel()
+
+	plan := &resolvedPlan{
+		Home:     "/tmp/decomk-home",
+		StampDir: "/tmp/decomk-home/stamps",
+		Tuples:   []string{"DECOMK_TOOL_REPO=config-tool", "CUSTOM=ok"},
+		ContextKeys: []string{
+			"DEFAULT",
+			"repo1",
+		},
+		WorkspaceRepos: []workspaceRepo{
+			{Name: "repo1"},
+		},
+	}
+	incomingEnv := map[string]string{
+		"DECOMK_TOOL_REPO": "env-tool",
+		"DECOMK_CONF_REPO": "env-conf",
+		"NOT_INCLUDED":     "ignored",
+	}
+	targets := []string{"Block00_base", "Block10_common"}
+
+	cookedTuples := canonicalEnvTuples(plan, targets, false, incomingEnv)
+	effective := effectiveTupleValues(cookedTuples)
+
+	// Config tuples must override incoming DECOMK_* pass-through values.
+	if got, want := effective["DECOMK_TOOL_REPO"], "config-tool"; got != want {
+		t.Fatalf("DECOMK_TOOL_REPO: got %q want %q", got, want)
+	}
+	// Incoming DECOMK_* values without tuple overrides should still pass through.
+	if got, want := effective["DECOMK_CONF_REPO"], "env-conf"; got != want {
+		t.Fatalf("DECOMK_CONF_REPO: got %q want %q", got, want)
+	}
+	// Computed values must still override any earlier values.
+	if got, want := effective["DECOMK_HOME"], plan.Home; got != want {
+		t.Fatalf("DECOMK_HOME: got %q want %q", got, want)
+	}
+	if _, ok := effective["NOT_INCLUDED"]; ok {
+		t.Fatalf("NOT_INCLUDED should not be present in canonical env tuples")
+	}
+
+	makeTuples, makeEnv := makeInvocation(
+		[]string{"PATH=/usr/bin", "DECOMK_CONF_REPO=base"},
+		cookedTuples,
+	)
+	if !reflect.DeepEqual(makeTuples, cookedTuples) {
+		t.Fatalf("make tuples: got %#v want %#v", makeTuples, cookedTuples)
+	}
+	makeEnvMap := envMapFromList(makeEnv)
+	for name, want := range effective {
+		if got := makeEnvMap[name]; got != want {
+			t.Fatalf("make env %s: got %q want %q", name, got, want)
+		}
+	}
+}
+
 func TestResolveWorkspacesDir_Precedence(t *testing.T) {
 	t.Parallel()
 

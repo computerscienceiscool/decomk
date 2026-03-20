@@ -67,6 +67,22 @@ Intent: Prevent devcontainer startup failures for users who copy the example dir
 Constraints: Keep stage-0 template generation as the source of truth, preserve existing container env defaults, and avoid changing selftest devcontainer behavior.
 Affects: `stage0/stage0.go`, `examples/devcontainer/devcontainer.json`, `examples/devcontainer/Dockerfile`, `README.md`.
 
+ID: DI-001-20260313-224000
+Date: 2026-03-13 22:40:00
+Status: active
+Decision: Treat env export as a first-class runtime contract by resolving `NAME=$` passthrough tuples against incoming environment values (with prior-tuple fallback and fail-fast when unresolved), auto-carrying incoming `DECOMK_*` vars, and generating both `env.sh` and make invocation variables from one canonical tuple sequence.
+Intent: Make `env.sh` authoritative (not debug-only) and guarantee that make plus child processes receive the same effective environment values even when make runs under sudo with environment reset.
+Constraints: Keep config grammar unchanged (tuple syntax only), reserve literal tuple value `$` for passthrough semantics, and defer `env.mk` as an optional future derived artifact rather than the source of truth.
+Affects: `cmd/decomk/main.go`, `cmd/decomk/main_test.go`, `README.md`, `doc/decomk-design.md`, `examples/decomk-selftest/fixtures/confrepo/scripts/verify_tool_repo.sh`.
+
+ID: DI-001-20260313-174538
+Date: 2026-03-13 17:45:38
+Status: active
+Decision: Keep tuple-driven `PATH` behavior in the canonical cooked env contract and do not split launcher-path semantics from make/recipe env semantics.
+Intent: Preserve one explicit and predictable contract (`env.sh`/cooked tuples) instead of introducing a dual-model where launcher lookup uses one PATH while make/recipes use another.
+Constraints: `PATH` tuple values may cause launcher failures when misconfigured, and that remains user-visible by design; defer any optional separate launcher-path mode to future design work if needed.
+Affects: `cmd/decomk/main.go`, `README.md`.
+
 ## Goal
 
 Create an isconf-inspired “context -> target groups + vars”
@@ -298,3 +314,4 @@ Pragmatic MVP: define a small set of **capability groups**, then compose per-rep
 - [x] 001.10 Add `decomk init` to scaffold `.devcontainer` files from embedded templates with flag/prompt inputs.
 - [x] 001.11 Generate example scaffold files from canonical templates and enforce sync via `go generate`/tests.
 - [x] 001.12 Make the production example devcontainer standalone by including a Dockerfile build entry and companion Dockerfile.
+- [ ] 001.13 Add optional derived `env.mk` output generated from the same canonical env tuple sequence as `env.sh` (without making `env.mk` the source of truth).
