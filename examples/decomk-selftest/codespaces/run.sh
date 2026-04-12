@@ -221,7 +221,9 @@ codespace_bash() {
 }
 
 latest_make_log_path() {
-  codespace_bash "find /tmp/decomk-selftest/log -type f -name make.log | sort | tail -n1"
+  local decomk_log_dir_q
+  decomk_log_dir_q="$(printf '%q' "$decomk_log_dir")"
+  codespace_bash "find $decomk_log_dir_q -type f -name make.log | sort | tail -n1"
 }
 
 load_make_log_or_fail() {
@@ -287,6 +289,8 @@ create_timeout=900
 ssh_timeout=600
 name_prefix="dst-codespaces"
 keep_on_fail="false"
+decomk_home="/tmp/decomk-selftest/home"
+decomk_log_dir="/tmp/decomk-selftest/log"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -478,8 +482,10 @@ cleanup() {
     gh codespace logs -c "$codespace_name" >"$temp_root/codespace.log" 2>&1 || true
 
     if [[ "$codespace_ready" == "true" ]]; then
-      codespace_bash "find /tmp/decomk-selftest/log -type f -name make.log | sort" >"$temp_root/make-log-paths.txt" 2>/dev/null || true
-      gh codespace cp -c "$codespace_name" -r "remote:/tmp/decomk-selftest/log" "$temp_root/remote-log-dir" >/dev/null 2>&1 || true
+      local decomk_log_dir_q
+      decomk_log_dir_q="$(printf '%q' "$decomk_log_dir")"
+      codespace_bash "find $decomk_log_dir_q -type f -name make.log | sort" >"$temp_root/make-log-paths.txt" 2>/dev/null || true
+      gh codespace cp -c "$codespace_name" -r "remote:$decomk_log_dir" "$temp_root/remote-log-dir" >/dev/null 2>&1 || true
     fi
 
     if [[ "$exit_code" -ne 0 && "$keep_on_fail" == "true" ]]; then
@@ -543,8 +549,8 @@ codespace_ready="true"
 repo_basename="${repo_slug##*/}"
 repo_basename_q="$(printf '%q' "$repo_basename")"
 run_id_q="$(printf '%q' "$run_id")"
-decomk_home_q="$(printf '%q' "/tmp/decomk-selftest/home")"
-decomk_log_dir_q="$(printf '%q' "/tmp/decomk-selftest/log")"
+decomk_home_q="$(printf '%q' "$decomk_home")"
+decomk_log_dir_q="$(printf '%q' "$decomk_log_dir")"
 tool_uri_q="$(printf '%q' "$tool_uri")"
 conf_uri_override_q="$(printf '%q' "$conf_uri")"
 run_args_q="$(printf '%q' "$decomk_run_args")"
@@ -593,7 +599,7 @@ fi
 
 make_log_path="$(latest_make_log_path)"
 if [[ -z "$make_log_path" ]]; then
-  fail 31 "could not find make.log under /tmp/decomk-selftest/log"
+  fail 31 "could not find make.log under $decomk_log_dir"
 fi
 log "using make log: $make_log_path"
 load_make_log_or_fail 31 "$make_log_path"
@@ -603,7 +609,35 @@ require_marker_or_fail 31 "SELFTEST PASS tool-repo-origin"
 require_marker_or_fail 31 "SELFTEST PASS context-override"
 require_marker_or_fail 31 "SELFTEST PASS default-tuple-available"
 
-if ! run_logged codespace_bash "decomk run TUPLE_STAMP_PROBE"; then
+run_decomk_with_stage0_env() {
+  local decomk_run_action_args="$1"
+
+  # Intent: Keep post-bootstrap `decomk run` invocations on the same DECOMK_HOME
+  # and DECOMK_LOG_DIR used during stage-0 bootstrap, so stamp regression checks
+  # operate on the same config/stamp/log state instead of falling back to /var paths.
+  # Source: DI-007-20260413-053500 (TODO/007)
+  local run_script
+  run_script="$(cat <<EOF
+set -euo pipefail
+workspace_dir="/workspaces/$repo_basename"
+if [[ ! -d "\$workspace_dir" ]]; then
+  workspace_dir="\$(find /workspaces -mindepth 1 -maxdepth 2 -type d -name $repo_basename_q | head -n1 || true)"
+fi
+if [[ -z "\$workspace_dir" ]]; then
+  echo "unable to locate workspace root containing repo $repo_basename" >&2
+  exit 1
+fi
+cd "\$workspace_dir"
+export DECOMK_HOME=$decomk_home_q
+export DECOMK_LOG_DIR=$decomk_log_dir_q
+decomk run $decomk_run_action_args
+EOF
+)"
+
+  codespace_bash "$run_script"
+}
+
+if ! run_logged run_decomk_with_stage0_env "TUPLE_STAMP_PROBE"; then
   fail 32 "stamp probe run failed"
 fi
 stamp_probe_log_path="$(latest_make_log_path)"
@@ -615,7 +649,7 @@ require_no_fail_markers_or_fail 32
 require_marker_or_fail 32 "SELFTEST PASS stamp-dir-working-dir"
 require_marker_or_fail 32 "SELFTEST PASS stamp-probe-ran"
 
-if ! run_logged codespace_bash "decomk run TUPLE_STAMP_PROBE TUPLE_STAMP_VERIFY"; then
+if ! run_logged run_decomk_with_stage0_env "TUPLE_STAMP_PROBE TUPLE_STAMP_VERIFY"; then
   fail 32 "stamp verify run failed"
 fi
 stamp_verify_log_path="$(latest_make_log_path)"

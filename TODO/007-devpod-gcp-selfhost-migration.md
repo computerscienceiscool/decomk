@@ -149,6 +149,14 @@ Intent: Ensure harness remote execution via `gh codespace ssh` is reliable and f
 Constraints: Keep the harness workflow unchanged, preserve timeout semantics, and avoid requiring manual per-run SSH setup.
 Affects: `.devcontainer/codespaces-selftest/devcontainer.json`, `examples/decomk-selftest/codespaces/run.sh`, `TODO/007-devpod-gcp-selfhost-migration.md`.
 
+ID: DI-007-20260413-053500
+Date: 2026-04-13 05:35:00
+Status: active
+Decision: Reuse stage-0 environment roots (`DECOMK_HOME`, `DECOMK_LOG_DIR`) for all post-bootstrap `decomk run` checks in the Codespaces harness.
+Intent: Keep stamp verification runs on the same config/stamp/log state initialized by stage-0 so harness checks do not silently fall back to `/var/decomk` defaults.
+Constraints: Preserve existing marker-based assertions, keep postCreate behavior unchanged, and avoid harness-side config mutation between runs.
+Affects: `examples/decomk-selftest/codespaces/run.sh`, `TODO/007-devpod-gcp-selfhost-migration.md`.
+
 Related design docs:
 - `doc/isconf-design.md`
 - `doc/decomk-design.md`
