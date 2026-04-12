@@ -22,8 +22,11 @@ Optional options:
   --conf-uri <git:...>       Optional override for config source URI.
                              Default: auto-generated fixture repo inside codespace.
   --tool-uri <uri>           Tool source URI (default: git:https://github.com/<repo>.git?ref=<branch>).
+  --machine <name>           Codespace machine type override.
+                             Default: auto-select from account-allowed machine list
+                             (prefers basicLinux32gb when available).
   --devcontainer-path <path> Repo-relative devcontainer.json path used for codespace create.
-                             (default: examples/decomk-selftest/codespaces/.devcontainer/devcontainer.json)
+                             (default: .devcontainer/codespaces-selftest/devcontainer.json)
   --idle-timeout <dur>       Codespace inactivity timeout (default: 30m).
   --retention-period <dur>   Codespace retention period after stop (default: 1h).
   --create-timeout <sec>     Wait timeout for codespace discovery (default: 900).
@@ -83,6 +86,43 @@ infer_repo_slug_from_origin() {
   fi
 
   printf '%s/%s\n' "$owner" "$repo_name"
+}
+
+resolve_machine_name() {
+  local requested_machine="$1"
+  local available_names=()
+  local available_name
+  local candidate
+
+  # Intent: Keep codespaces harness non-interactive by resolving machine choice
+  # programmatically from the account-allowed machine list before create calls.
+  # Source: DI-007-20260413-014500 (TODO/007)
+  mapfile -t available_names < <(gh api /user/codespaces/machines --jq '.machines[].name')
+  if [[ ${#available_names[@]} -eq 0 ]]; then
+    return 1
+  fi
+
+  if [[ -n "$requested_machine" ]]; then
+    for candidate in "${available_names[@]}"; do
+      if [[ "$candidate" == "$requested_machine" ]]; then
+        printf '%s\n' "$candidate"
+        return 0
+      fi
+    done
+    return 2
+  fi
+
+  for candidate in basicLinux32gb standardLinux32gb basicLinux64gb standardLinux64gb; do
+    for available_name in "${available_names[@]}"; do
+      if [[ "$available_name" == "$candidate" ]]; then
+        printf '%s\n' "$available_name"
+        return 0
+      fi
+    done
+  done
+
+  printf '%s\n' "${available_names[0]}"
+  return 0
 }
 
 resolve_codespace_name() {
@@ -182,7 +222,8 @@ repo_slug=""
 branch=""
 conf_uri=""
 tool_uri=""
-devcontainer_path="examples/decomk-selftest/codespaces/.devcontainer/devcontainer.json"
+devcontainer_path=".devcontainer/codespaces-selftest/devcontainer.json"
+machine=""
 idle_timeout="30m"
 retention_period="1h"
 create_timeout=900
@@ -210,6 +251,11 @@ while [[ $# -gt 0 ]]; do
     --tool-uri)
       [[ $# -ge 2 ]] || fail 2 "--tool-uri requires a value"
       tool_uri="$2"
+      shift 2
+      ;;
+    --machine)
+      [[ $# -ge 2 ]] || fail 2 "--machine requires a value"
+      machine="$2"
       shift 2
       ;;
     --devcontainer-path)
@@ -296,6 +342,13 @@ fi
 if [[ ! -f "$repo_root/$devcontainer_path" ]]; then
   fail 2 "devcontainer file not found at $repo_root/$devcontainer_path"
 fi
+# Intent: Fail fast on non-Codespaces-compatible devcontainer paths so create
+# requests don't make network calls that are known to fail. Codespaces create
+# accepts paths rooted under `.devcontainer/`.
+# Source: DI-007-20260413-011500 (TODO/007)
+if [[ "$devcontainer_path" != .devcontainer/* ]]; then
+  fail 2 "--devcontainer-path must live under .devcontainer/ for Codespaces create API compatibility"
+fi
 
 need_command gh
 need_command git
@@ -329,6 +382,18 @@ fi
 if [[ -z "$tool_uri" ]]; then
   tool_uri="git:https://github.com/$repo_slug.git?ref=$branch"
 fi
+
+machine_resolution_status=0
+resolved_machine=""
+resolved_machine="$(resolve_machine_name "$machine")" || machine_resolution_status=$?
+if [[ "$machine_resolution_status" -ne 0 ]]; then
+  case "$machine_resolution_status" in
+    1) fail 10 "unable to resolve an allowed codespace machine; check Codespaces entitlement and retry" ;;
+    2) fail 2 "requested --machine is not in your allowed machine list; run: gh api /user/codespaces/machines --jq '.machines[] | [.name, .displayName] | @tsv'" ;;
+    *) fail 10 "failed to resolve codespace machine type" ;;
+  esac
+fi
+machine="$resolved_machine"
 
 decomk_run_args="$(join_space_args "${decomk_args[@]}")"
 if [[ -z "$decomk_run_args" ]]; then
@@ -378,6 +443,7 @@ trap cleanup EXIT
 
 log "repo: $repo_slug"
 log "branch: $branch"
+log "machine: $machine"
 log "devcontainer path: $devcontainer_path"
 if [[ -n "$conf_uri" ]]; then
   log "conf URI override: $conf_uri"
@@ -391,6 +457,7 @@ log "codespace display name: $display_name"
 run_logged gh codespace create \
   -R "$repo_slug" \
   -b "$branch" \
+  --machine "$machine" \
   --devcontainer-path "$devcontainer_path" \
   -d "$display_name" \
   --idle-timeout "$idle_timeout" \

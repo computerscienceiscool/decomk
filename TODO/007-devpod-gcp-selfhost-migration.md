@@ -106,6 +106,24 @@ Constraints: Keep pushed-branch requirement, keep marker/stamp assertions fixtur
 Affects: `examples/decomk-selftest/codespaces/run.sh`, `examples/decomk-selftest/README.md`, `README.md`.
 Supersedes: DI-007-20260412-230000 (config source requirement only)
 
+ID: DI-007-20260413-011500
+Date: 2026-04-13 01:15:00
+Status: active
+Decision: Move Codespaces harness devcontainer config under `.devcontainer/` for API compatibility, and default harness creates to a non-interactive machine type (`basicLinux32gb`) with an explicit `--machine` override.
+Intent: Eliminate known `gh codespace create` failures from invalid config path and interactive machine prompts so parity runs stay automation-friendly.
+Constraints: Preserve pushed-branch guardrails and existing marker/stamp validation flow; keep path override available but restricted to `.devcontainer/*` for compatibility.
+Affects: `examples/decomk-selftest/codespaces/run.sh`, `.devcontainer/codespaces-selftest/devcontainer.json`, `.devcontainer/codespaces-selftest/Dockerfile`, `TODO/007-devpod-gcp-selfhost-migration.md`.
+Supersedes: DI-007-20260412-230000 (devcontainer path + machine selection details only)
+
+ID: DI-007-20260413-014500
+Date: 2026-04-13 01:45:00
+Status: active
+Decision: Auto-resolve Codespaces machine type from the account-allowed machine list when `--machine` is unset (preferring `basicLinux32gb` when available), while retaining explicit `--machine` override with validation.
+Intent: Remove fragile hardcoded machine assumptions and prevent interactive `gh codespace create` prompts from breaking automation on accounts with different policy-allowed machine sets.
+Constraints: Keep non-interactive create path, fail fast with actionable errors when no machine is available or an override is invalid, and preserve existing codespace lifecycle and marker/stamp validation behavior.
+Affects: `examples/decomk-selftest/codespaces/run.sh`, `examples/decomk-selftest/README.md`, `README.md`, `TODO/007-devpod-gcp-selfhost-migration.md`.
+Supersedes: DI-007-20260413-011500 (machine defaulting behavior only)
+
 Related design docs:
 - `doc/isconf-design.md`
 - `doc/decomk-design.md`

@@ -65,6 +65,12 @@ Codespaces parity run with explicit config URI override:
 examples/decomk-selftest/codespaces/run.sh --conf-uri git:https://github.com/<owner>/<conf-repo>.git
 ```
 
+Codespaces parity run with explicit machine override:
+
+```bash
+examples/decomk-selftest/codespaces/run.sh --machine <machine-name>
+```
+
 ## Context and tuple semantics covered
 
 - Workspace repo name `decomk` is auto-detected as context key.
