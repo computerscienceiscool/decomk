@@ -23,7 +23,7 @@ Optional options:
                              Default: auto-generated fixture repo inside codespace.
   --tool-uri <uri>           Tool source URI (default: git:https://github.com/<repo>.git?ref=<branch>).
   --machine <name>           Codespace machine type override.
-                             Default: auto-select from account-allowed machine list
+                             Default: auto-select from repository-allowed machine list
                              (prefers basicLinux32gb when available).
   --devcontainer-path <path> Repo-relative devcontainer.json path used for codespace create.
                              (default: .devcontainer/codespaces-selftest/devcontainer.json)
@@ -90,14 +90,36 @@ infer_repo_slug_from_origin() {
 
 resolve_machine_name() {
   local requested_machine="$1"
+  local repo="$2"
   local available_names=()
   local available_name
   local candidate
+  local machine_lines=""
 
   # Intent: Keep codespaces harness non-interactive by resolving machine choice
-  # programmatically from the account-allowed machine list before create calls.
-  # Source: DI-007-20260413-014500 (TODO/007)
-  mapfile -t available_names < <(gh api /user/codespaces/machines --jq '.machines[].name')
+  # from repository-allowed machine lists before create calls, and fail fast
+  # when discovery endpoints are unavailable instead of passing malformed values
+  # into `gh codespace create`.
+  # Source: DI-007-20260413-040500 (TODO/007)
+  if machine_lines="$(gh api "repos/$repo/codespaces/machines" --jq '.machines[].name' 2>/dev/null)"; then
+    :
+  elif machine_lines="$(gh api /user/codespaces/machines --jq '.machines[].name' 2>/dev/null)"; then
+    :
+  else
+    return 1
+  fi
+
+  if [[ -z "$machine_lines" ]]; then
+    return 1
+  fi
+  mapfile -t available_names <<<"$machine_lines"
+  local compact_names=()
+  for available_name in "${available_names[@]}"; do
+    if [[ -n "$available_name" ]]; then
+      compact_names+=("$available_name")
+    fi
+  done
+  available_names=("${compact_names[@]}")
   if [[ ${#available_names[@]} -eq 0 ]]; then
     return 1
   fi
@@ -385,11 +407,11 @@ fi
 
 machine_resolution_status=0
 resolved_machine=""
-resolved_machine="$(resolve_machine_name "$machine")" || machine_resolution_status=$?
+resolved_machine="$(resolve_machine_name "$machine" "$repo_slug")" || machine_resolution_status=$?
 if [[ "$machine_resolution_status" -ne 0 ]]; then
   case "$machine_resolution_status" in
-    1) fail 10 "unable to resolve an allowed codespace machine; check Codespaces entitlement and retry" ;;
-    2) fail 2 "requested --machine is not in your allowed machine list; run: gh api /user/codespaces/machines --jq '.machines[] | [.name, .displayName] | @tsv'" ;;
+    1) fail 10 "unable to resolve a codespace machine from API; pass --machine explicitly or check gh/api access" ;;
+    2) fail 2 "requested --machine is not in the allowed machine list for this repo; run: gh api repos/$repo_slug/codespaces/machines --jq '.machines[] | [.name, .displayName] | @tsv'" ;;
     *) fail 10 "failed to resolve codespace machine type" ;;
   esac
 fi

@@ -124,6 +124,15 @@ Constraints: Keep non-interactive create path, fail fast with actionable errors 
 Affects: `examples/decomk-selftest/codespaces/run.sh`, `examples/decomk-selftest/README.md`, `README.md`, `TODO/007-devpod-gcp-selfhost-migration.md`.
 Supersedes: DI-007-20260413-011500 (machine defaulting behavior only)
 
+ID: DI-007-20260413-040500
+Date: 2026-04-13 04:05:00
+Status: active
+Decision: Resolve Codespaces machine choices from repo-scoped machine API first (`repos/<owner>/<repo>/codespaces/machines`), fall back to legacy user-scoped API when available, and fail fast instead of propagating API error payloads into `--machine`.
+Intent: Prevent harness misconfiguration when Codespaces API shape/entitlements differ by account or repo, while preserving non-interactive machine selection and explicit `--machine` overrides.
+Constraints: Keep deterministic preferred machine ordering (`basicLinux32gb` first when available), keep actionable error text for invalid overrides, and preserve existing marker/stamp test flow.
+Affects: `examples/decomk-selftest/codespaces/run.sh`, `README.md`, `TODO/007-devpod-gcp-selfhost-migration.md`.
+Supersedes: DI-007-20260413-014500 (machine discovery mechanism only)
+
 Related design docs:
 - `doc/isconf-design.md`
 - `doc/decomk-design.md`

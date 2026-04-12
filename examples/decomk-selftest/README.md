@@ -71,6 +71,9 @@ Codespaces parity run with explicit machine override:
 examples/decomk-selftest/codespaces/run.sh --machine <machine-name>
 ```
 
+By default, the harness resolves machine type from the repository-allowed
+Codespaces machine list (prefers `basicLinux32gb` when available).
+
 ## Context and tuple semantics covered
 
 - Workspace repo name `decomk` is auto-detected as context key.
