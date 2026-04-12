@@ -136,7 +136,7 @@ No selector mapping logic is required in `Makefile`; target names are the select
 ## 5.2 `postCreateCommand.sh`
 
 - Ensures a `decomk` binary is available in `PATH` (install-first default; optional clone mode).
-- Syncs `DECOMK_CONF_REPO` into `${DECOMK_HOME}/conf`.
+- Syncs `DECOMK_CONF_URI` (`git:...`) into `${DECOMK_HOME}/conf`.
 - Runs `decomk run ${DECOMK_RUN_ARGS:-all}`.
 - Does not perform selftest marker validation; verification stays in fixture make/scripts plus harness log parsing.
 

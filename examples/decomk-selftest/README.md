@@ -20,7 +20,7 @@ Template note:
 4. DevPod starts a workspace from `workspace-template/.devcontainer/`.
 5. `postCreateCommand.sh` performs stage-0 bootstrap:
    - ensures a `decomk` binary exists in `PATH` (install-first by default; selftest uses clone mode),
-   - clone/pull `DECOMK_CONF_REPO`.
+   - clone/pull config repo from `DECOMK_CONF_URI`.
 6. `postCreateCommand.sh` runs `decomk run`.
 7. `run.sh` reads container make logs and enforces PASS/FAIL markers.
 8. `run.sh` then runs two explicit stamp regression invocations:

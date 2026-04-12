@@ -80,6 +80,15 @@ Intent: Ensure `all` always orchestrates the full check set and cannot be skippe
 Constraints: Do not reintroduce `.PHONY` on idempotent leaf targets; keep marker-based harness validation unchanged.
 Affects: `examples/decomk-selftest/fixtures/confrepo/Makefile`.
 
+ID: DI-007-20260412-171000
+Date: 2026-04-12 17:10:00
+Status: active
+Decision: Switch selftest stage-0 fixture wiring from repo URL vars to URI vars by serving both tool/conf fixtures over `git://` and injecting `DECOMK_TOOL_URI` + `DECOMK_CONF_URI` into generated devcontainer inputs.
+Intent: Keep selftest aligned with the production URI-based stage-0 contract while preserving automatic context detection, fixture-only PASS/FAIL logic, and no scenario translation table.
+Constraints: `run.sh` remains the only component that publishes fixture repos; postCreate remains generated/minimal and does not own test logic; verification scripts must parse `git:` URIs to assert origin URLs.
+Affects: `examples/decomk-selftest/devpod-local/run.sh`, selftest fixture `Makefile` and scripts, generated selftest workspace template files, `examples/decomk-selftest/README.md`, `doc/decomk-design.md`.
+Supersedes: DI-007-20260311-145221
+
 Related design docs:
 - `doc/isconf-design.md`
 - `doc/decomk-design.md`

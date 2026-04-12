@@ -83,6 +83,15 @@ Intent: Preserve one explicit and predictable contract (`env.sh`/cooked tuples) 
 Constraints: `PATH` tuple values may cause launcher failures when misconfigured, and that remains user-visible by design; defer any optional separate launcher-path mode to future design work if needed.
 Affects: `cmd/decomk/main.go`, `README.md`.
 
+ID: DI-001-20260412-170500
+Date: 2026-04-12 17:05:00
+Status: active
+Decision: Replace stage-0 tool/config source inputs with URI expressions (`DECOMK_TOOL_URI`, `DECOMK_CONF_URI`) and update `decomk init` to scaffold only URI-based devcontainer values.
+Intent: Remove mode/repo/install-package split configuration, keep stage-0 source selection explicit (`go:` or `git:`), and make templates/examples/init generation share one deterministic contract.
+Constraints: Tool URI must accept `go:` and `git:` forms; config URI must accept only `git:`; generated scaffolds and embedded templates must stay synchronized.
+Affects: `stage0/stage0.go`, `cmd/decomk/init.go`, `cmd/decomk/init_test.go`, `cmd/decomk/templates/*`, generated `examples/devcontainer/*`, generated selftest workspace templates, `README.md`.
+Supersedes: DI-001-20260311-163942, DI-001-20260311-175002
+
 ## Goal
 
 Create an isconf-inspired “context -> target groups + vars”

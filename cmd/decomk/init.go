@@ -21,10 +21,8 @@ import (
 type initFlags struct {
 	repoRoot string
 	name     string
-	confRepo string
-	toolMode string
-	toolPkg  string
-	toolRepo string
+	confURI  string
+	toolURI  string
 	home     string
 	logDir   string
 	runArgs  string
@@ -51,10 +49,8 @@ func cmdInit(args []string, stdout, stderr io.Writer) (int, error) {
 
 	f := initFlags{
 		repoRoot: "",
-		confRepo: envi.String("DECOMK_CONF_REPO", ""),
-		toolMode: envi.String("DECOMK_TOOL_MODE", "install"),
-		toolPkg:  envi.String("DECOMK_TOOL_INSTALL_PKG", stage0.DefaultToolInstallPkg),
-		toolRepo: envi.String("DECOMK_TOOL_REPO", stage0.DefaultToolRepo),
+		confURI:  envi.String("DECOMK_CONF_URI", ""),
+		toolURI:  envi.String("DECOMK_TOOL_URI", stage0.DefaultToolURI),
 		home:     envi.String("DECOMK_HOME", state.DefaultHome),
 		logDir:   envi.String("DECOMK_LOG_DIR", state.DefaultLogDir),
 		runArgs:  envi.String("DECOMK_RUN_ARGS", "all"),
@@ -112,16 +108,18 @@ func cmdInit(args []string, stdout, stderr io.Writer) (int, error) {
 	if f.name == "" {
 		return 1, fmt.Errorf("devcontainer name cannot be empty")
 	}
-	switch f.toolMode {
-	case "install", "clone":
-	default:
-		return 1, fmt.Errorf("tool mode must be install or clone (got %q)", f.toolMode)
+	// Intent: Lock stage-0 source configuration onto URI expressions (`go:`/`git:`)
+	// so generated init scaffolds use one explicit source contract instead of
+	// split mode/package/repo variables.
+	// Source: DI-001-20260412-170500 (TODO/001)
+	if strings.TrimSpace(f.toolURI) == "" {
+		return 1, fmt.Errorf("DECOMK_TOOL_URI template value cannot be empty")
 	}
-	// Intent: Validate tool install package only for install mode so clone mode
-	// does not require irrelevant settings.
-	// Source: DI-001-20260311-175002 (TODO/001)
-	if f.toolMode == "install" && strings.TrimSpace(f.toolPkg) == "" {
-		return 1, fmt.Errorf("tool install package cannot be empty when tool mode is install")
+	if !strings.HasPrefix(f.toolURI, "go:") && !strings.HasPrefix(f.toolURI, "git:") {
+		return 1, fmt.Errorf("DECOMK_TOOL_URI template value must start with go: or git: (got %q)", f.toolURI)
+	}
+	if f.confURI != "" && !strings.HasPrefix(f.confURI, "git:") {
+		return 1, fmt.Errorf("DECOMK_CONF_URI template value must start with git: when set (got %q)", f.confURI)
 	}
 	if f.home == "" || !filepath.IsAbs(f.home) {
 		return 1, fmt.Errorf("DECOMK_HOME template value must be an absolute path (got %q)", f.home)
@@ -136,10 +134,8 @@ func cmdInit(args []string, stdout, stderr io.Writer) (int, error) {
 	// Source: DI-001-20260312-141200 (TODO/001)
 	data := stage0.DevcontainerTemplateData{
 		Name:              f.name,
-		ConfRepo:          f.confRepo,
-		ToolMode:          f.toolMode,
-		ToolInstallPkg:    f.toolPkg,
-		ToolRepo:          f.toolRepo,
+		ConfURI:           f.confURI,
+		ToolURI:           f.toolURI,
 		Home:              f.home,
 		LogDir:            f.logDir,
 		DecomkRunArgs:     f.runArgs,
@@ -151,8 +147,8 @@ func cmdInit(args []string, stdout, stderr io.Writer) (int, error) {
 		return 1, err
 	}
 
-	if f.confRepo == "" {
-		fmt.Fprintln(stderr, "decomk init: warning: DECOMK_CONF_REPO is empty; postCreateCommand.sh will fail until conf/decomk.conf exists locally")
+	if f.confURI == "" {
+		fmt.Fprintln(stderr, "decomk init: warning: DECOMK_CONF_URI is empty; postCreateCommand.sh will fail until conf/decomk.conf exists locally")
 	}
 	for _, result := range results {
 		fmt.Fprintf(stdout, "%s: %s\n", result.Status, result.Path)
@@ -164,10 +160,8 @@ func cmdInit(args []string, stdout, stderr io.Writer) (int, error) {
 func addInitFlags(fs *flag.FlagSet, f *initFlags) {
 	fs.StringVar(&f.repoRoot, "repo-root", f.repoRoot, "target repo root (writes under <repo-root>/.devcontainer; default: current git repo root)")
 	fs.StringVar(&f.name, "name", f.name, "devcontainer name (default: repo basename)")
-	fs.StringVar(&f.confRepo, "conf-repo", f.confRepo, "DECOMK_CONF_REPO value for devcontainer.json")
-	fs.StringVar(&f.toolMode, "tool-mode", f.toolMode, "tool bootstrap mode for postCreateCommand.sh (install or clone)")
-	fs.StringVar(&f.toolPkg, "tool-install-pkg", f.toolPkg, "go install package@version used when -tool-mode=install")
-	fs.StringVar(&f.toolRepo, "tool-repo", f.toolRepo, "DECOMK_TOOL_REPO value for devcontainer.json")
+	fs.StringVar(&f.confURI, "conf-uri", f.confURI, "DECOMK_CONF_URI value for devcontainer.json")
+	fs.StringVar(&f.toolURI, "tool-uri", f.toolURI, "DECOMK_TOOL_URI value for devcontainer.json")
 	fs.StringVar(&f.home, "home", f.home, "DECOMK_HOME value for devcontainer.json")
 	fs.StringVar(&f.logDir, "log-dir", f.logDir, "DECOMK_LOG_DIR value for devcontainer.json")
 	fs.StringVar(&f.runArgs, "run-args", f.runArgs, "DECOMK_RUN_ARGS value for devcontainer.json")
@@ -185,26 +179,14 @@ func promptInitFlags(f *initFlags, setFlags map[string]bool, in io.Reader, out i
 			return err
 		}
 	}
-	if !setFlags["conf-repo"] {
-		f.confRepo, err = promptWithDefault(reader, out, "DECOMK_CONF_REPO", f.confRepo)
+	if !setFlags["conf-uri"] {
+		f.confURI, err = promptWithDefault(reader, out, "DECOMK_CONF_URI", f.confURI)
 		if err != nil {
 			return err
 		}
 	}
-	if !setFlags["tool-mode"] {
-		f.toolMode, err = promptWithDefault(reader, out, "DECOMK_TOOL_MODE", f.toolMode)
-		if err != nil {
-			return err
-		}
-	}
-	if !setFlags["tool-install-pkg"] {
-		f.toolPkg, err = promptWithDefault(reader, out, "DECOMK_TOOL_INSTALL_PKG", f.toolPkg)
-		if err != nil {
-			return err
-		}
-	}
-	if !setFlags["tool-repo"] {
-		f.toolRepo, err = promptWithDefault(reader, out, "DECOMK_TOOL_REPO", f.toolRepo)
+	if !setFlags["tool-uri"] {
+		f.toolURI, err = promptWithDefault(reader, out, "DECOMK_TOOL_URI", f.toolURI)
 		if err != nil {
 			return err
 		}

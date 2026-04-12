@@ -14,6 +14,7 @@
 
 ## Decision-First Specification and Compliance Protocol (Required)
 - The agent must collect and lock user decisions before making any code edits for a task.
+- Locked decisions must be recorded as Decision Intent Log entries in the relevant `TODO/*.md` file(s) with clear intent and rationale.
 - The agent must ask decision questions up front in a single intake round whenever possible.
 - Required decision categories are architecture, design/behavior, implementation approach, function naming, variable naming, and file/path decisions.
 - The agent must ask these as multiple-choice questions whenever practical.

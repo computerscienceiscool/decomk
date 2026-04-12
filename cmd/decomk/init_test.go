@@ -17,10 +17,8 @@ func TestRenderInitTemplate_DevcontainerJSON(t *testing.T) {
 
 	data := stage0.DevcontainerTemplateData{
 		Name:              `repo "alpha"`,
-		ConfRepo:          "https://example.com/conf.git",
-		ToolMode:          "install",
-		ToolInstallPkg:    "github.com/stevegt/decomk/cmd/decomk@latest",
-		ToolRepo:          "https://example.com/tool.git",
+		ConfURI:           "git:https://example.com/conf.git?ref=prod",
+		ToolURI:           "go:github.com/stevegt/decomk/cmd/decomk@stable",
 		Home:              "/var/decomk",
 		LogDir:            "/var/log/decomk",
 		DecomkRunArgs:     "all INSTALL",
@@ -47,13 +45,11 @@ func TestRenderInitTemplate_DevcontainerJSON(t *testing.T) {
 	}
 
 	tests := map[string]string{
-		"DECOMK_HOME":             data.Home,
-		"DECOMK_LOG_DIR":          data.LogDir,
-		"DECOMK_TOOL_MODE":        data.ToolMode,
-		"DECOMK_TOOL_INSTALL_PKG": data.ToolInstallPkg,
-		"DECOMK_TOOL_REPO":        data.ToolRepo,
-		"DECOMK_CONF_REPO":        data.ConfRepo,
-		"DECOMK_RUN_ARGS":         data.DecomkRunArgs,
+		"DECOMK_HOME":     data.Home,
+		"DECOMK_LOG_DIR":  data.LogDir,
+		"DECOMK_TOOL_URI": data.ToolURI,
+		"DECOMK_CONF_URI": data.ConfURI,
+		"DECOMK_RUN_ARGS": data.DecomkRunArgs,
 	}
 	for key, want := range tests {
 		if got := envMap[key]; got != want {
@@ -68,10 +64,8 @@ func TestWriteInitStage0_ForcePolicy(t *testing.T) {
 	repoRoot := t.TempDir()
 	data := stage0.DevcontainerTemplateData{
 		Name:              "repo",
-		ConfRepo:          "https://example.com/conf.git",
-		ToolMode:          "install",
-		ToolInstallPkg:    "github.com/stevegt/decomk/cmd/decomk@latest",
-		ToolRepo:          "https://example.com/tool.git",
+		ConfURI:           "git:https://example.com/conf.git",
+		ToolURI:           "go:github.com/stevegt/decomk/cmd/decomk@stable",
 		Home:              "/var/decomk",
 		LogDir:            "/var/log/decomk",
 		DecomkRunArgs:     "all",
@@ -110,10 +104,8 @@ func TestCmdInit_NoPromptWritesFiles(t *testing.T) {
 		"-no-prompt",
 		"-repo-root", repoRoot,
 		"-name", "myrepo",
-		"-conf-repo", "https://example.com/conf.git",
-		"-tool-mode", "install",
-		"-tool-install-pkg", "github.com/stevegt/decomk/cmd/decomk@latest",
-		"-tool-repo", "https://example.com/tool.git",
+		"-conf-uri", "git:https://example.com/conf.git",
+		"-tool-uri", "go:github.com/stevegt/decomk/cmd/decomk@stable",
 		"-home", "/var/decomk",
 		"-log-dir", "/var/log/decomk",
 		"-run-args", "all",
@@ -179,7 +171,7 @@ func TestCmdInit_DefaultRepoRootUsesGitToplevel(t *testing.T) {
 	var stderr bytes.Buffer
 	code, err := cmdInit([]string{
 		"-no-prompt",
-		"-conf-repo", "https://example.com/conf.git",
+		"-conf-uri", "git:https://example.com/conf.git",
 		"-name", "myrepo",
 	}, &stdout, &stderr)
 	if err != nil {
@@ -218,7 +210,7 @@ func TestCmdInit_DefaultRepoRootErrorsOutsideGitRepo(t *testing.T) {
 	var stderr bytes.Buffer
 	code, err := cmdInit([]string{
 		"-no-prompt",
-		"-conf-repo", "https://example.com/conf.git",
+		"-conf-uri", "git:https://example.com/conf.git",
 		"-name", "myrepo",
 	}, &stdout, &stderr)
 	if err == nil {
@@ -232,49 +224,47 @@ func TestCmdInit_DefaultRepoRootErrorsOutsideGitRepo(t *testing.T) {
 	}
 }
 
-func TestCmdInit_ToolInstallPkgRequiredOnlyForInstallMode(t *testing.T) {
+func TestCmdInit_ToolURIValidation(t *testing.T) {
 	t.Parallel()
 
 	repoRoot := t.TempDir()
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 
-	// clone mode should not require tool-install-pkg.
+	// go: URIs are valid for tool bootstrap.
 	code, err := cmdInit([]string{
 		"-no-prompt",
 		"-repo-root", repoRoot,
 		"-name", "myrepo",
-		"-conf-repo", "https://example.com/conf.git",
-		"-tool-mode", "clone",
-		"-tool-install-pkg", "",
+		"-conf-uri", "git:https://example.com/conf.git",
+		"-tool-uri", "go:github.com/stevegt/decomk/cmd/decomk@stable",
 	}, &stdout, &stderr)
 	if err != nil {
-		t.Fatalf("clone mode cmdInit() error: %v", err)
+		t.Fatalf("go URI cmdInit() error: %v", err)
 	}
 	if code != 0 {
-		t.Fatalf("clone mode cmdInit() code: got %d want 0", code)
+		t.Fatalf("go URI cmdInit() code: got %d want 0", code)
 	}
 
-	// install mode must require a non-empty package.
+	// Invalid schemes should fail fast.
 	stdout.Reset()
 	stderr.Reset()
 	code, err = cmdInit([]string{
 		"-no-prompt",
 		"-repo-root", repoRoot,
 		"-name", "myrepo",
-		"-conf-repo", "https://example.com/conf.git",
-		"-tool-mode", "install",
-		"-tool-install-pkg", "",
+		"-conf-uri", "git:https://example.com/conf.git",
+		"-tool-uri", "zip:https://example.com/tool.zip",
 		"-force",
 	}, &stdout, &stderr)
 	if err == nil {
-		t.Fatalf("install mode cmdInit() error: got nil want error")
+		t.Fatalf("invalid tool URI cmdInit() error: got nil want error")
 	}
 	if code != 1 {
-		t.Fatalf("install mode cmdInit() code: got %d want 1", code)
+		t.Fatalf("invalid tool URI cmdInit() code: got %d want 1", code)
 	}
-	if !strings.Contains(err.Error(), "when tool mode is install") {
-		t.Fatalf("error: got %q want mode-specific install-pkg error", err.Error())
+	if !strings.Contains(err.Error(), "must start with go: or git:") {
+		t.Fatalf("error: got %q want tool URI scheme error", err.Error())
 	}
 }
 

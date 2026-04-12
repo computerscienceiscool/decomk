@@ -12,10 +12,8 @@
   "containerEnv": {
     "DECOMK_HOME": {{json .Home}},
     "DECOMK_LOG_DIR": {{json .LogDir}},
-    "DECOMK_TOOL_MODE": {{json .ToolMode}},
-    "DECOMK_TOOL_INSTALL_PKG": {{json .ToolInstallPkg}},
-    "DECOMK_TOOL_REPO": {{json .ToolRepo}},
-    "DECOMK_CONF_REPO": {{json .ConfRepo}},
+    "DECOMK_TOOL_URI": {{json .ToolURI}},
+    "DECOMK_CONF_URI": {{json .ConfURI}},
     "DECOMK_RUN_ARGS": {{json .DecomkRunArgs}}
   },
 {{- if .RemoteUser }}

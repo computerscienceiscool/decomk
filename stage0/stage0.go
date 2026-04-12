@@ -24,11 +24,14 @@ const (
 	// devcontainer.json files.
 	DefaultPostCreateCommand = "bash .devcontainer/postCreateCommand.sh"
 
-	// DefaultToolInstallPkg is the install-mode `go install` package@version.
-	DefaultToolInstallPkg = "github.com/stevegt/decomk/cmd/decomk@latest"
-
-	// DefaultToolRepo is the default git URL used in clone mode.
-	DefaultToolRepo = "https://github.com/stevegt/decomk"
+	// DefaultToolURI is the canonical stage-0 tool source expression used when
+	// no explicit DECOMK_TOOL_URI is provided in generated devcontainer files.
+	//
+	// Intent: Keep stage-0 bootstrap source selection on one explicit URI grammar
+	// (`go:` / `git:`) so install-vs-clone behavior is determined by source value
+	// instead of a parallel mode variable family.
+	// Source: DI-001-20260412-170500 (TODO/001)
+	DefaultToolURI = "go:github.com/stevegt/decomk/cmd/decomk@stable"
 )
 
 // DevcontainerTemplateData is the full data model for rendering
@@ -49,10 +52,8 @@ type DevcontainerTemplateData struct {
 	RemoteUser        string
 	Home              string
 	LogDir            string
-	ToolMode          string
-	ToolInstallPkg    string
-	ToolRepo          string
-	ConfRepo          string
+	ToolURI           string
+	ConfURI           string
 	DecomkRunArgs     string
 	PostCreateCommand string
 }
@@ -63,11 +64,8 @@ func (data DevcontainerTemplateData) EnsureDefaults() DevcontainerTemplateData {
 	if data.PostCreateCommand == "" {
 		data.PostCreateCommand = DefaultPostCreateCommand
 	}
-	if data.ToolInstallPkg == "" {
-		data.ToolInstallPkg = DefaultToolInstallPkg
-	}
-	if data.ToolRepo == "" {
-		data.ToolRepo = DefaultToolRepo
+	if data.ToolURI == "" {
+		data.ToolURI = DefaultToolURI
 	}
 	return data
 }
@@ -80,16 +78,14 @@ func ProductionExampleDevcontainerData() DevcontainerTemplateData {
 	// box.
 	// Source: DI-001-20260313-183500 (TODO/001)
 	return DevcontainerTemplateData{
-		Name:              "decomk (example; set DECOMK_CONF_REPO)",
+		Name:              "decomk (example; set DECOMK_CONF_URI)",
 		BuildDockerfile:   "Dockerfile",
 		BuildContext:      ".",
 		RemoteUser:        "dev",
 		Home:              "/var/decomk",
 		LogDir:            "/var/log/decomk",
-		ToolMode:          "install",
-		ToolInstallPkg:    DefaultToolInstallPkg,
-		ToolRepo:          DefaultToolRepo,
-		ConfRepo:          "",
+		ToolURI:           DefaultToolURI,
+		ConfURI:           "",
 		DecomkRunArgs:     "all",
 		PostCreateCommand: DefaultPostCreateCommand,
 	}
@@ -106,10 +102,8 @@ func SelftestDevcontainerData() DevcontainerTemplateData {
 		RemoteUser:        "dev",
 		Home:              "/tmp/decomk-selftest/home",
 		LogDir:            "/tmp/decomk-selftest/log",
-		ToolMode:          "clone",
-		ToolInstallPkg:    DefaultToolInstallPkg,
-		ToolRepo:          "__DECOMK_TOOL_REPO__",
-		ConfRepo:          "__DECOMK_CONF_REPO__",
+		ToolURI:           "__DECOMK_TOOL_URI__",
+		ConfURI:           "__DECOMK_CONF_URI__",
 		DecomkRunArgs:     "__DECOMK_RUN_ARGS__",
 		PostCreateCommand: DefaultPostCreateCommand,
 	}

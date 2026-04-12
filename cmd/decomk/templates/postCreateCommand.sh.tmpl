@@ -2,39 +2,142 @@
 
 set -euo pipefail
 
-# Intent: Implement generic stage-0 bootstrap with install-first tool delivery:
-# install decomk via go install by default, optionally clone+pull then install in
-# repo mode, and keep config repo sync separate.
-# Source: DI-001-20260311-163942 (TODO/001)
+# Intent: Implement generic stage-0 bootstrap with URI-based source expressions
+# so tool/config acquisition is explicit, deterministic, and shared between
+# generated examples and `decomk init` scaffolds.
+# Source: DI-001-20260412-170500 (TODO/001)
 DECOMK_HOME="${DECOMK_HOME:-/var/decomk}"
 DECOMK_LOG_DIR="${DECOMK_LOG_DIR:-/var/log/decomk}"
-DECOMK_TOOL_MODE="${DECOMK_TOOL_MODE:-install}"
-DECOMK_TOOL_INSTALL_PKG="${DECOMK_TOOL_INSTALL_PKG:-github.com/stevegt/decomk/cmd/decomk@latest}"
-DECOMK_TOOL_REPO="${DECOMK_TOOL_REPO:-https://github.com/stevegt/decomk}"
+DECOMK_TOOL_URI="${DECOMK_TOOL_URI:-go:github.com/stevegt/decomk/cmd/decomk@stable}"
+DECOMK_CONF_URI="${DECOMK_CONF_URI:-}"
 
-export DECOMK_HOME DECOMK_LOG_DIR DECOMK_TOOL_MODE DECOMK_TOOL_INSTALL_PKG DECOMK_TOOL_REPO
+export DECOMK_HOME DECOMK_LOG_DIR DECOMK_TOOL_URI DECOMK_CONF_URI
+
+die() {
+  echo "decomk bootstrap: $*" >&2
+  exit 1
+}
+
+require_clean_git_repo() {
+  local repo_dir="$1"
+  if [[ -n "$(git -C "$repo_dir" status --porcelain --untracked-files=normal)" ]]; then
+    die "git repo has uncommitted changes: $repo_dir"
+  fi
+}
+
+parse_git_uri() {
+  local uri="$1"
+  if [[ "$uri" != git:* ]]; then
+    die "git source URI must start with git: (got: $uri)"
+  fi
+
+  local payload="${uri#git:}"
+  local repo_url="$payload"
+  local query=""
+  local git_ref=""
+
+  if [[ "$payload" == *"?"* ]]; then
+    repo_url="${payload%%\?*}"
+    query="${payload#*\?}"
+  fi
+  if [[ -z "$repo_url" ]]; then
+    die "git source URI is missing repository URL: $uri"
+  fi
+
+  if [[ -n "$query" ]]; then
+    local pair key value
+    IFS='&' read -r -a pairs <<<"$query"
+    for pair in "${pairs[@]}"; do
+      key="${pair%%=*}"
+      value=""
+      if [[ "$pair" == *=* ]]; then
+        value="${pair#*=}"
+      fi
+      if [[ "$key" == "ref" ]]; then
+        git_ref="$value"
+      fi
+    done
+  fi
+
+  printf '%s\n%s\n' "$repo_url" "$git_ref"
+}
+
+checkout_git_ref() {
+  local repo_dir="$1"
+  local git_ref="$2"
+  if [[ -z "$git_ref" ]]; then
+    return 0
+  fi
+
+  if git -C "$repo_dir" show-ref --verify --quiet "refs/remotes/origin/$git_ref"; then
+    git -C "$repo_dir" checkout -B "$git_ref" "origin/$git_ref"
+    return 0
+  fi
+
+  if git -C "$repo_dir" show-ref --verify --quiet "refs/tags/$git_ref"; then
+    git -C "$repo_dir" checkout --detach "refs/tags/$git_ref"
+    return 0
+  fi
+
+  if git -C "$repo_dir" rev-parse --verify --quiet "$git_ref^{commit}" >/dev/null; then
+    git -C "$repo_dir" checkout --detach "$git_ref"
+    return 0
+  fi
+
+  if git -C "$repo_dir" fetch --prune origin "$git_ref" >/dev/null 2>&1; then
+    git -C "$repo_dir" checkout --detach FETCH_HEAD
+    return 0
+  fi
+
+  die "git ref not found in $repo_dir: $git_ref"
+}
 
 sync_git_repo() {
   local repo_url="$1"
   local repo_dir="$2"
+  local git_ref="$3"
 
   if [[ -z "$repo_url" ]]; then
     return 0
   fi
 
   if [[ -d "$repo_dir/.git" ]]; then
+    require_clean_git_repo "$repo_dir"
     git -C "$repo_dir" remote set-url origin "$repo_url"
+    git -C "$repo_dir" fetch --prune origin
+    if [[ -n "$git_ref" ]]; then
+      checkout_git_ref "$repo_dir" "$git_ref"
+      return 0
+    fi
+
+    local current_branch
+    current_branch="$(git -C "$repo_dir" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+    if [[ -n "$current_branch" ]]; then
+      git -C "$repo_dir" pull --ff-only origin "$current_branch"
+      return 0
+    fi
+
+    local origin_head
+    origin_head="$(git -C "$repo_dir" remote show origin | sed -n 's/.*HEAD branch: //p' | head -n 1)"
+    if [[ -n "$origin_head" ]]; then
+      git -C "$repo_dir" checkout -B "$origin_head" "origin/$origin_head"
+      git -C "$repo_dir" pull --ff-only origin "$origin_head"
+      return 0
+    fi
+
     git -C "$repo_dir" pull --ff-only
     return 0
   fi
 
   if [[ -e "$repo_dir" ]]; then
-    echo "decomk bootstrap: path exists but is not a git repo: $repo_dir" >&2
-    return 1
+    die "path exists but is not a git repo: $repo_dir"
   fi
 
   mkdir -p "$(dirname "$repo_dir")"
   git clone "$repo_url" "$repo_dir"
+  if [[ -n "$git_ref" ]]; then
+    checkout_git_ref "$repo_dir" "$git_ref"
+  fi
 }
 
 resolve_go_bin_dir() {
@@ -56,18 +159,44 @@ resolve_go_bin_dir() {
 }
 
 install_decomk() {
-  case "$DECOMK_TOOL_MODE" in
-    install)
-      go install "$DECOMK_TOOL_INSTALL_PKG"
+  case "$DECOMK_TOOL_URI" in
+    go:*)
+      local install_spec="${DECOMK_TOOL_URI#go:}"
+      if [[ -z "$install_spec" ]]; then
+        die "go source URI must include module@version after go:"
+      fi
+      go install "$install_spec"
       ;;
-    clone)
+    git:*)
+      local parsed tool_repo_url tool_git_ref
+      mapfile -t parsed < <(parse_git_uri "$DECOMK_TOOL_URI")
+      tool_repo_url="${parsed[0]}"
+      tool_git_ref="${parsed[1]:-}"
       local tool_src_dir="$DECOMK_HOME/src/decomk"
-      sync_git_repo "$DECOMK_TOOL_REPO" "$tool_src_dir"
+      sync_git_repo "$tool_repo_url" "$tool_src_dir" "$tool_git_ref"
       (cd "$tool_src_dir" && go install ./cmd/decomk)
       ;;
     *)
-      echo "decomk bootstrap: invalid DECOMK_TOOL_MODE=$DECOMK_TOOL_MODE (expected install or clone)" >&2
-      return 1
+      die "invalid DECOMK_TOOL_URI=$DECOMK_TOOL_URI (expected go:... or git:...)"
+      ;;
+  esac
+}
+
+sync_conf_repo() {
+  if [[ -z "$DECOMK_CONF_URI" ]]; then
+    return 0
+  fi
+
+  case "$DECOMK_CONF_URI" in
+    git:*)
+      local parsed conf_repo_url conf_git_ref
+      mapfile -t parsed < <(parse_git_uri "$DECOMK_CONF_URI")
+      conf_repo_url="${parsed[0]}"
+      conf_git_ref="${parsed[1]:-}"
+      sync_git_repo "$conf_repo_url" "$DECOMK_HOME/conf" "$conf_git_ref"
+      ;;
+    *)
+      die "invalid DECOMK_CONF_URI=$DECOMK_CONF_URI (expected git:...)"
       ;;
   esac
 }
@@ -89,16 +218,14 @@ resolve_decomk_binary() {
 mkdir -p "$DECOMK_HOME" "$DECOMK_LOG_DIR"
 
 install_decomk
-sync_git_repo "${DECOMK_CONF_REPO:-}" "$DECOMK_HOME/conf"
+sync_conf_repo
 
-if [[ -z "${DECOMK_CONF_REPO:-}" ]] && [[ ! -f "$DECOMK_HOME/conf/decomk.conf" ]]; then
-  echo "decomk bootstrap: no DECOMK_CONF_REPO and no $DECOMK_HOME/conf/decomk.conf; skipping decomk run" >&2
-  exit 1
+if [[ -z "$DECOMK_CONF_URI" ]] && [[ ! -f "$DECOMK_HOME/conf/decomk.conf" ]]; then
+  die "no DECOMK_CONF_URI and no $DECOMK_HOME/conf/decomk.conf; skipping decomk run"
 fi
 
 decomk_bin="$(resolve_decomk_binary)" || {
-  echo "decomk bootstrap: could not find installed decomk binary (tried go install target and PATH)" >&2
-  exit 1
+  die "could not find installed decomk binary (tried go install target and PATH)"
 }
 
 # shellcheck disable=SC2086

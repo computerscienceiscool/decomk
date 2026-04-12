@@ -32,7 +32,7 @@ Design notes:
 For a new repo, scaffold the lifecycle files first:
 
 ```bash
-go run ./cmd/decomk init -conf-repo <git-url>
+go run ./cmd/decomk init -conf-uri git:<git-url>
 ```
 
 Regenerate canonical example scaffold files when templates change:
@@ -48,10 +48,10 @@ For experimentation, you can put both in your workspace repo root and pass them
 explicitly with `-config` and `-makefile` (this avoids depending on any config
 repo clone).
 
-For a typical devcontainer setup, put `DECOMK_CONF_REPO` (and optionally
-`DECOMK_TOOL_REPO`) in `.devcontainer/devcontainer.json`, and run the reference
+For a typical devcontainer setup, put `DECOMK_CONF_URI` (and optionally
+`DECOMK_TOOL_URI`) in `.devcontainer/devcontainer.json`, and run the reference
 `.devcontainer/postCreateCommand.sh` lifecycle hook. That hook performs stage-0
-bootstrap (ensures `decomk` is in `PATH`, syncs config repo, then runs decomk).
+bootstrap (ensures `decomk` is in `PATH`, syncs config repo from URI, then runs decomk).
 The checked-in `examples/devcontainer/devcontainer.json` is standalone and
 includes a local Dockerfile build definition.
 
@@ -114,7 +114,7 @@ Example container filesystem tree:
   - decomk keeps persistent state under `/var/decomk/*`
   - decomk writes per-run logs under `/var/log/decomk/*` by default
   - the shared config repo is cloned under `/var/decomk/conf` (not under `/workspaces`)
-  - in `DECOMK_TOOL_MODE=clone`, the tool repo is cloned under `/var/decomk/src/decomk`
+  - when `DECOMK_TOOL_URI` uses `git:...`, the tool repo is cloned under `/var/decomk/src/decomk`
 
 ```text
 /
@@ -289,9 +289,9 @@ the step has succeeded.
 
 4) Stage-0 bootstrap (outside decomk core)
    - lifecycle tooling (for example `.devcontainer/postCreateCommand.sh`) ensures a `decomk` binary is available in `PATH`:
-     - default (`DECOMK_TOOL_MODE=install`): `go install ${DECOMK_TOOL_INSTALL_PKG}`
-     - optional (`DECOMK_TOOL_MODE=clone`): clone/pull `DECOMK_TOOL_REPO`, then `go install ./cmd/decomk`
-   - lifecycle tooling syncs `DECOMK_CONF_REPO` into `<DECOMK_HOME>/conf`
+     - `DECOMK_TOOL_URI=go:<module>@<version>`: `go install <module>@<version>`
+     - `DECOMK_TOOL_URI=git:<repo-url>[?ref=<git-ref>]`: clone/pull repo into `<DECOMK_HOME>/src/decomk`, optionally checkout ref, then `go install ./cmd/decomk`
+   - lifecycle tooling syncs `DECOMK_CONF_URI=git:<repo-url>[?ref=<git-ref>]` into `<DECOMK_HOME>/conf`
    - `decomk plan/run` consumes this local state and does not clone/pull repos itself.
 
 5) Load config definitions (`decomk.conf`)
@@ -494,8 +494,8 @@ ARGS:
   Flags for init:
   -repo-root <path>         Repo root where .devcontainer files are written (default: current git repo root)
   -name <string>            devcontainer.json "name" value
-  -conf-repo <url>          DECOMK_CONF_REPO value in devcontainer.json
-  -tool-repo <url>          DECOMK_TOOL_REPO value in devcontainer.json
+  -conf-uri <uri>           DECOMK_CONF_URI value in devcontainer.json (git:...)
+  -tool-uri <uri>           DECOMK_TOOL_URI value in devcontainer.json (go:... or git:...)
   -home <abs-path>          DECOMK_HOME value in devcontainer.json
   -log-dir <abs-path>       DECOMK_LOG_DIR value in devcontainer.json
   -run-args <string>        DECOMK_RUN_ARGS value in devcontainer.json
@@ -537,7 +537,7 @@ install-user-stuff:
   - In a Dockerfile, you typically want:
     - `RUN mkdir -p /var/decomk /var/log/decomk && chown -R $USER:$USER /var/decomk /var/log/decomk`
   - Alternatively, use a minimal lifecycle hook to run decomk directly; see `examples/devcontainer/postCreateCommand.sh`.
-  - That hook performs stage-0 bootstrap by ensuring `decomk` is in `PATH`, syncing `DECOMK_CONF_REPO`, then running `decomk`.
+  - That hook performs stage-0 bootstrap by ensuring `decomk` is in `PATH`, syncing `DECOMK_CONF_URI`, then running `decomk`.
 - The repo’s workspace path is host-dependent; prefer using
   `${containerWorkspaceFolder}` in `devcontainer.json` rather than assuming
   `/workspaces/<repo>`.

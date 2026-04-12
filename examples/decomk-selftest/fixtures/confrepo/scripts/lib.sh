@@ -4,7 +4,7 @@ set -euo pipefail
 
 # Intent: Keep reusable fixture assertions in one place so self-test targets stay
 # small and emit consistent PASS/FAIL markers for harness log parsing.
-# Source: DI-007-20260311-145221 (TODO/007)
+# Source: DI-007-20260412-171000 (TODO/007)
 
 selftest_fail() {
   local message="$1"
@@ -24,4 +24,17 @@ selftest_require_file() {
   if [[ ! -f "$file_path" ]]; then
     selftest_fail "missing-file-$file_path"
   fi
+}
+
+selftest_git_uri_repo_url() {
+  local uri="$1"
+  if [[ "$uri" != git:* ]]; then
+    selftest_fail "invalid-git-uri-$uri"
+  fi
+  local payload="${uri#git:}"
+  local repo_url="${payload%%\?*}"
+  if [[ -z "$repo_url" ]]; then
+    selftest_fail "invalid-git-uri-missing-url-$uri"
+  fi
+  printf '%s' "$repo_url"
 }

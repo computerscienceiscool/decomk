@@ -8,7 +8,7 @@ source "$script_dir/lib.sh"
 # Intent: Drive the full self-test through decomk itself: publish a temporary
 # config repo over git://, let decomk pull it during postCreate, and validate
 # pass/fail only from container logs.
-# Source: DI-007-20260311-145221 (TODO/007)
+# Source: DI-007-20260412-171000 (TODO/007)
 
 usage() {
   cat <<'USAGE'
@@ -145,20 +145,20 @@ start_git_server() {
 }
 
 render_devcontainer_json() {
-  local conf_repo_url="$1"
-  local tool_repo_url="$2"
+  local conf_uri="$1"
+  local tool_uri="$2"
   local decomk_run_args="$3"
   local file_path="$4"
-  local escaped_conf_url
-  local escaped_tool_url
+  local escaped_conf_uri
+  local escaped_tool_uri
   local escaped_args
 
-  escaped_conf_url="$(escape_sed_replacement "$conf_repo_url")"
-  escaped_tool_url="$(escape_sed_replacement "$tool_repo_url")"
+  escaped_conf_uri="$(escape_sed_replacement "$conf_uri")"
+  escaped_tool_uri="$(escape_sed_replacement "$tool_uri")"
   escaped_args="$(escape_sed_replacement "$decomk_run_args")"
   sed -i \
-    -e "s|__DECOMK_CONF_REPO__|$escaped_conf_url|g" \
-    -e "s|__DECOMK_TOOL_REPO__|$escaped_tool_url|g" \
+    -e "s|__DECOMK_CONF_URI__|$escaped_conf_uri|g" \
+    -e "s|__DECOMK_TOOL_URI__|$escaped_tool_uri|g" \
     -e "s|__DECOMK_RUN_ARGS__|$escaped_args|g" \
     "$file_path"
 }
@@ -183,10 +183,10 @@ start_git_server
 workspace_copy="$temp_root/decomk"
 workspace_name="dst-selftest-$(date +%s)-$$"
 decomk_run_args="$(join_space_args "${decomk_args[@]}")"
-conf_repo_url="git://host.docker.internal:$git_server_port/confrepo.git"
-tool_repo_url="git://host.docker.internal:$git_server_port/toolrepo.git"
-log "fixture config repo: $conf_repo_url"
-log "fixture tool repo: $tool_repo_url"
+conf_uri="git:git://host.docker.internal:$git_server_port/confrepo.git"
+tool_uri="git:git://host.docker.internal:$git_server_port/toolrepo.git"
+log "fixture config source URI: $conf_uri"
+log "fixture tool source URI: $tool_uri"
 
 log "preparing workspace"
 run_logged mkdir -p "$workspace_copy"
@@ -197,7 +197,7 @@ run_logged cp "$template_dir/devcontainer.json" "$workspace_copy/.devcontainer/d
 run_logged cp "$template_dir/Dockerfile" "$workspace_copy/.devcontainer/Dockerfile"
 run_logged cp "$template_dir/postCreateCommand.sh" "$workspace_copy/.devcontainer/postCreateCommand.sh"
 run_logged chmod +x "$workspace_copy/.devcontainer/postCreateCommand.sh"
-render_devcontainer_json "$conf_repo_url" "$tool_repo_url" "$decomk_run_args" "$workspace_copy/.devcontainer/devcontainer.json"
+render_devcontainer_json "$conf_uri" "$tool_uri" "$decomk_run_args" "$workspace_copy/.devcontainer/devcontainer.json"
 
 active_workspaces+=("$workspace_name")
 run_logged run_devpod_up "$workspace_name" "$workspace_copy"

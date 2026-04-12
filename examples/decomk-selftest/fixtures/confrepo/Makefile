@@ -10,11 +10,11 @@ SELFTEST_SCRIPT_DIR := $(DECOMK_HOME)/conf/scripts
 
 # Intent: Ensure fixture scripts see decomk bootstrap/runtime env variables even
 # when make is invoked with tuple-heavy argv and context-expanded targets.
-# Source: DI-007-20260311-145221 (TODO/007)
+# Source: DI-007-20260412-171000 (TODO/007)
 export DECOMK_HOME
 export DECOMK_LOG_DIR
-export DECOMK_TOOL_REPO
-export DECOMK_CONF_REPO
+export DECOMK_TOOL_URI
+export DECOMK_CONF_URI
 
 # Intent: Keep idempotent fixture targets as real file targets (not .PHONY), and
 # keep stamp-regression state inside DECOMK_STAMPDIR so all make-run artifacts

@@ -63,15 +63,15 @@ Non-goals (for MVP):
 
 - State engine: GNU `make` + stamps.
 - Stamp behavior: `decomk` pre-touches existing stamps by default (no flag planned).
-- Self-update model (isconf-style):
-  - decomk keeps a canonical clone of its own repo under `<DECOMK_HOME>/decomk`
-  - each invocation runs `git pull --ff-only`, rebuilds, and re-execs into the
-    updated binary
-  - tool repo URL is provided via the CLI (`-tool-repo`) or env (`DECOMK_TOOL_REPO`)
-    (with a devcontainer-friendly local inference fallback)
+- Stage-0 tool bootstrap model:
+  - lifecycle hooks ensure a decomk binary is in `PATH` before `decomk run`
+  - `DECOMK_TOOL_URI` selects source mode:
+    - `go:<module>@<version>` uses `go install`
+    - `git:<repo-url>[?ref=<git-ref>]` clone/pulls then `go install ./cmd/decomk`
+  - decomk core does not self-update or re-exec itself
 - Config repo model:
   - a shared config repo is cloned/pulled into `<DECOMK_HOME>/conf` (default `/var/decomk/conf`)
-  - the repo URL is provided via the CLI (`-conf-repo`) or env (`DECOMK_CONF_REPO`)
+  - config source is provided as `DECOMK_CONF_URI=git:<repo-url>[?ref=<git-ref>]`
 - Pilot repo: `mob-sandbox` (devcontainer + `postCreateCommand`).
 
 ## High-level overview
@@ -92,10 +92,10 @@ Like `rc.isconf`, decomk needs a bootstrap/update step, but the current scope is
 intentionally small and focused on container-local state:
 - ensure `<DECOMK_HOME>` exists (default `/var/decomk`) and required subdirs
   exist (`conf/`, `stamps/`, `log/`)
-- clone/pull the decomk tool repo into `<DECOMK_HOME>/decomk`, rebuild, and
-  re-exec into the updated binary (self-update)
-- optionally clone/pull the shared config repo into `<DECOMK_HOME>/conf` when
-  `-conf-repo` / `DECOMK_CONF_REPO` is set
+- stage-0 lifecycle tooling (outside decomk core) ensures decomk is installed from
+  `DECOMK_TOOL_URI` (`go:` or `git:`) before invoking decomk
+- stage-0 lifecycle tooling optionally clone/pulls the shared config repo into
+  `<DECOMK_HOME>/conf` when `DECOMK_CONF_URI` is set
 - discover workspace repos (git checkouts) under the workspace parent directory
   (often `/workspaces/*`) so the container can be configured based on multiple
   WIP repos present

@@ -212,7 +212,7 @@ func TestCanonicalEnvTuplesAndMakeInvocationParity(t *testing.T) {
 	plan := &resolvedPlan{
 		Home:     "/tmp/decomk-home",
 		StampDir: "/tmp/decomk-home/stamps",
-		Tuples:   []string{"DECOMK_TOOL_REPO=config-tool", "CUSTOM=ok"},
+		Tuples:   []string{"DECOMK_TOOL_URI=config-tool-uri", "CUSTOM=ok"},
 		ContextKeys: []string{
 			"DEFAULT",
 			"repo1",
@@ -222,9 +222,9 @@ func TestCanonicalEnvTuplesAndMakeInvocationParity(t *testing.T) {
 		},
 	}
 	incomingEnv := map[string]string{
-		"DECOMK_TOOL_REPO": "env-tool",
-		"DECOMK_CONF_REPO": "env-conf",
-		"NOT_INCLUDED":     "ignored",
+		"DECOMK_TOOL_URI": "env-tool-uri",
+		"DECOMK_CONF_URI": "env-conf-uri",
+		"NOT_INCLUDED":    "ignored",
 	}
 	targets := []string{"Block00_base", "Block10_common"}
 
@@ -232,12 +232,12 @@ func TestCanonicalEnvTuplesAndMakeInvocationParity(t *testing.T) {
 	effective := effectiveTupleValues(cookedTuples)
 
 	// Config tuples must override incoming DECOMK_* pass-through values.
-	if got, want := effective["DECOMK_TOOL_REPO"], "config-tool"; got != want {
-		t.Fatalf("DECOMK_TOOL_REPO: got %q want %q", got, want)
+	if got, want := effective["DECOMK_TOOL_URI"], "config-tool-uri"; got != want {
+		t.Fatalf("DECOMK_TOOL_URI: got %q want %q", got, want)
 	}
 	// Incoming DECOMK_* values without tuple overrides should still pass through.
-	if got, want := effective["DECOMK_CONF_REPO"], "env-conf"; got != want {
-		t.Fatalf("DECOMK_CONF_REPO: got %q want %q", got, want)
+	if got, want := effective["DECOMK_CONF_URI"], "env-conf-uri"; got != want {
+		t.Fatalf("DECOMK_CONF_URI: got %q want %q", got, want)
 	}
 	// Computed values must still override any earlier values.
 	if got, want := effective["DECOMK_HOME"], plan.Home; got != want {
@@ -248,7 +248,7 @@ func TestCanonicalEnvTuplesAndMakeInvocationParity(t *testing.T) {
 	}
 
 	makeTuples, makeEnv := makeInvocation(
-		[]string{"PATH=/usr/bin", "DECOMK_CONF_REPO=base"},
+		[]string{"PATH=/usr/bin", "DECOMK_CONF_URI=base-uri"},
 		cookedTuples,
 	)
 	if !reflect.DeepEqual(makeTuples, cookedTuples) {
