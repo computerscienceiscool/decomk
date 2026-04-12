@@ -133,6 +133,14 @@ Constraints: Keep deterministic preferred machine ordering (`basicLinux32gb` fir
 Affects: `examples/decomk-selftest/codespaces/run.sh`, `README.md`, `TODO/007-devpod-gcp-selfhost-migration.md`.
 Supersedes: DI-007-20260413-014500 (machine discovery mechanism only)
 
+ID: DI-007-20260413-043500
+Date: 2026-04-13 04:35:00
+Status: active
+Decision: Add progress output (dot ticks with periodic elapsed time) during Codespaces discovery and SSH readiness wait loops.
+Intent: Improve operator feedback during slow startup so waits are visibly active and easier to distinguish from stalled harness execution.
+Constraints: Keep wait-loop behavior unchanged, avoid contaminating command-substitution outputs, and preserve timeout-based failure semantics.
+Affects: `examples/decomk-selftest/codespaces/run.sh`, `TODO/007-devpod-gcp-selfhost-migration.md`.
+
 Related design docs:
 - `doc/isconf-design.md`
 - `doc/decomk-design.md`

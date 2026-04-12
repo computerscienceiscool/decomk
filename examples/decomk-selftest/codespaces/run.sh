@@ -152,32 +152,67 @@ resolve_codespace_name() {
   local display_name="$2"
   local timeout_seconds="$3"
   local deadline=$((SECONDS + timeout_seconds))
+  local wait_ticks=0
 
   while ((SECONDS < deadline)); do
     while IFS=$'\t' read -r listed_display listed_name; do
       if [[ "$listed_display" == "$display_name" && -n "$listed_name" ]]; then
+        if (( wait_ticks > 0 )); then
+          printf '\n' >&2
+        fi
         printf '%s\n' "$listed_name"
         return 0
       fi
     done < <(gh codespace list -R "$repo" --json displayName,name --jq '.[] | [.displayName, .name] | @tsv')
+    wait_ticks=$((wait_ticks + 1))
+    emit_wait_progress "codespace discovery" "$wait_ticks" "$((wait_ticks * 5))"
     sleep 5
   done
 
+  if (( wait_ticks > 0 )); then
+    printf '\n' >&2
+  fi
   return 1
 }
 
 wait_for_codespace_ssh() {
   local timeout_seconds="$1"
   local deadline=$((SECONDS + timeout_seconds))
+  local wait_ticks=0
 
   while ((SECONDS < deadline)); do
     if gh codespace ssh -c "$codespace_name" -- "true" >/dev/null 2>&1; then
+      if (( wait_ticks > 0 )); then
+        printf '\n' >&2
+      fi
       return 0
     fi
+    wait_ticks=$((wait_ticks + 1))
+    emit_wait_progress "codespace SSH readiness" "$wait_ticks" "$((wait_ticks * 5))"
     sleep 5
   done
 
+  if (( wait_ticks > 0 )); then
+    printf '\n' >&2
+  fi
   return 1
+}
+
+emit_wait_progress() {
+  local wait_label="$1"
+  local wait_ticks="$2"
+  local elapsed_seconds="$3"
+
+  # Intent: Show visible progress while waiting on slow Codespaces startup
+  # phases so operators can distinguish normal startup latency from a hung run.
+  # Source: DI-007-20260413-043500 (TODO/007)
+  if (( wait_ticks == 1 )); then
+    printf '[decomk-selftest] waiting for %s' "$wait_label" >&2
+  fi
+  printf '.' >&2
+  if (( wait_ticks % 12 == 0 )); then
+    printf ' %ss\n[decomk-selftest] waiting for %s' "$elapsed_seconds" "$wait_label" >&2
+  fi
 }
 
 codespace_bash() {
