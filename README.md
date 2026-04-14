@@ -2,159 +2,44 @@
 
 `decomk` is an isconf-inspired bootstrap wrapper for devcontainers.
 
-It resolves a **context** (e.g., `owner/repo`, `repo`, `DEFAULT`) into:
-- a list of `NAME=value` **tuples** to pass to `make`
-- a (possibly empty) default list of **make targets** from config tokens
-- a generated env export file (`<DECOMK_HOME>/env.sh`) for other processes to source
+## Philosophy
 
-It then selects the final make targets from positional **action args**
-(isconf-style) and runs **GNU make** as a subprocess in a persistent **stamp
-directory**, so repeated runs converge quickly.
+`decomk` separates concerns:
 
-If you want background on isconf-style bootstraps, see https://infrastructures.org/.
+- **Policy** lives in shared config (`decomk.conf`): context expansion, tuple values, and default target composition.
+- **Execution graph** lives in a shared `Makefile`: file targets in the stamp directory define idempotent, dependency-ordered work.
+- **Stage-0 lifecycle files** (`.devcontainer/devcontainer.json`, `.devcontainer/postCreateCommand.sh`) are generated scaffolding and should be treated as managed bootstrap wrappers, not as the place to encode per-repo tool policy.
 
-## Status
+For deeper design background, see:
 
-This repo contains an MVP implementation in Go:
-- `decomk init`: scaffold `.devcontainer/devcontainer.json` + `.devcontainer/postCreateCommand.sh` from embedded templates
-- `decomk plan`: resolve + print the plan; print env exports (dry-run; does **not** write `<DECOMK_HOME>/env.sh`); run `make -n` in the stamp dir
-- `decomk run`: resolve + write env export file; run `make` in the stamp dir
-- `go generate ./...` (or `make generate`): regenerate canonical example scaffold files from those same templates
+- `doc/decomk-design.md` (decomk behavior and selftest design)
+- `doc/isconf-design.md` (isconf algorithm lineage)
 
-Planned work lives under `TODO/`.
+## Current commands
 
-Design notes:
-- `doc/isconf-design.md` describes the reverse-engineered isconf algorithm and rationale.
-- `doc/decomk-design.md` describes decomk selftest design decisions and selector semantics.
+- `decomk init` — scaffold stage-0 lifecycle files in `.devcontainer/`
+- `decomk plan` — resolve tuples/targets + run `make -n` in the stamp directory
+- `decomk run` — write env export file + run `make` in the stamp directory
 
-## Quick start (MVP)
+## Step-by-step onboarding
 
-For a new repo, scaffold the lifecycle files first:
+### 1) Create one shared config repo for all managed containers
 
-```bash
-go run ./cmd/decomk init -conf-uri git:<git-url>
-```
+Create a git repo with at least:
 
-Regenerate canonical example scaffold files when templates change:
+- `decomk.conf`
+- `Makefile`
 
-```bash
-make generate
-make check-generated
-```
+Minimal example `decomk.conf`:
 
-1) Create `decomk.conf` and a `Makefile`.
-
-For experimentation, you can put both in your workspace repo root and pass them
-explicitly with `-config` and `-makefile` (this avoids depending on any config
-repo clone).
-
-For a typical devcontainer setup, put `DECOMK_CONF_URI` (and optionally
-`DECOMK_TOOL_URI`) in `.devcontainer/devcontainer.json`, and run the reference
-`.devcontainer/postCreateCommand.sh` lifecycle hook. That hook performs stage-0
-bootstrap (ensures `decomk` is in `PATH`, syncs config repo from URI, then runs decomk).
-The checked-in `examples/devcontainer/devcontainer.json` is standalone and
-includes a local Dockerfile build definition.
-
-DECOMK_HOME defaults to /var/decomk, so the config repo clone lives under `/var/decomk/conf`. 
-
-By default, decomk writes per-run logs under `/var/log/decomk` (override with
-`-log-dir` / `DECOMK_LOG_DIR`).
-
-`decomk.conf`:
-```conf
-# Context definitions (macros).
-DEFAULT: Block00_base Block10_common FOO='bar baz'
-
-# Repo-specific composition (context key).
-myrepo: DEFAULT Block20_go
-```
-
-`Makefile`:
-```make
-SHELL := /bin/bash
-.ONESHELL:
-.SHELLFLAGS := -euo pipefail -c
-
-# IMPORTANT: decomk runs make in the stamp directory.
-# That means $@ is a file path under the stamp dir, and touching $@
-# records "this target succeeded".
-
-Block00_base:
-	echo "base tools"
-	touch $@
-
-Block10_common: Block00_base
-	echo "common tools (FOO=$(FOO))"
-	touch $@
-
-Block20_go: Block10_common
-	echo "install go tools"
-	touch $@
-```
-
-2) Run `plan`:
-```bash
-DECOMK_HOME=/tmp/decomk go run ./cmd/decomk plan -config ./decomk.conf -makefile ./Makefile -context myrepo
-```
-
-3) Run `make` via `decomk`:
-```bash
-DECOMK_HOME=/tmp/decomk DECOMK_LOG_DIR=/tmp/decomk/log go run ./cmd/decomk run -config ./decomk.conf -makefile ./Makefile -context myrepo
-```
-
-To install a binary instead of using `go run`:
-```bash
-go install ./cmd/decomk
-```
-
-## Worked example: 
-
-Example container filesystem tree:
-  - WIP repos are under `/workspaces/*`
-  - decomk keeps persistent state under `/var/decomk/*`
-  - decomk writes per-run logs under `/var/log/decomk/*` by default
-  - the shared config repo is cloned under `/var/decomk/conf` (not under `/workspaces`)
-  - when `DECOMK_TOOL_URI` uses `git:...`, the tool repo is cloned under `/var/decomk/src/decomk`
-
-```text
-/
-├── var
-│   ├── decomk
-│   │   ├── src
-│   │   │   └── decomk             (tool repo clone; clone mode only)
-│   │   ├── conf                   (config repo clone; managed by stage-0 hook)
-│   │   │   ├── decomk.conf        (configuration file for all managed repos)
-│   │   │   ├── decomk.d
-│   │   │   │   └── *.conf
-│   │   │   └── Makefile           (Makefile for all managed repos)
-│   │   ├── env.sh                 (env exports for other processes to source)
-│   │   ├── stamps
-│   │   │   ├── install-codex      (example)
-│   │   │   ├── install-mob-consensus (example)
-│   │   │   └── install-neovim     (example)
-│   └── log
-│       └── decomk
-│           └── <runID>
-│               └── make.log        (per-run make output)
-└── workspaces
-    ├── repo1  (example)
-    └── repo2  (example)
-
-```
-
-If `/var/log/decomk` is not writable and you did not explicitly set
-`-log-dir`/`DECOMK_LOG_DIR`, decomk falls back to `<DECOMK_HOME>/log`.
-
-Example `/var/decomk/conf/decomk.conf`:
 ```conf
 DEFAULT: Block00_base Block10_common
-
-# Context keys chosen per workspace repo (derived from its git origin URL when
-# possible, else from the workspace directory basename).
-stevegt/decomk: DEFAULT Block20_go
+owner/repo-a: DEFAULT Block20_go
+owner/repo-b: DEFAULT Block30_node
 ```
 
-Example `/var/decomk/conf/Makefile`:
+Minimal example `Makefile`:
+
 ```make
 SHELL := /bin/bash
 .ONESHELL:
@@ -169,43 +54,123 @@ Block10_common: Block00_base
 	touch $@
 
 Block20_go: Block10_common
-	echo "go"
+	echo "go tools"
 	touch $@
 ```
 
-Run:
+Push this repo somewhere reachable by your devcontainers and keep its clone URI ready as:
+
+- `git:<repo-url>[?ref=<git-ref>]`
+
+### 2) Run `decomk init` in each repo you want managed
+
+Install decomk:
+
 ```bash
-export DECOMK_HOME=/var/decomk
+go install github.com/stevegt/decomk/cmd/decomk@stable
+```
+
+Then in each workspace repo:
+
+```bash
+decomk init -conf-uri git:<your-shared-conf-repo-url>
+```
+
+This writes:
+
+- `.devcontainer/devcontainer.json`
+- `.devcontainer/postCreateCommand.sh`
+
+### 3) Start/rebuild the devcontainer
+
+The generated post-create hook:
+
+1. ensures `decomk` is available in `PATH` from `DECOMK_TOOL_URI`,
+2. syncs config repo from `DECOMK_CONF_URI` into `<DECOMK_HOME>/conf`,
+3. runs `decomk run ${DECOMK_RUN_ARGS:-all}`.
+
+## `decomk init` safety and overwrite policy
+
+`decomk init` is conservative by default:
+
+- If **either** target stage-0 file already exists, `decomk init` fails.
+- It does **not** overwrite existing files in default mode.
+- It does **not** write alternate temp merge files in default mode.
+
+This is safe to run in existing repos because it will stop before changing managed files.
+
+If you intentionally want to regenerate/replace files, use force:
+
+- `-f` (alias)
+- `-force`
+
+Recommended reconciliation workflow when files already exist:
+
+```bash
+git commit -m "Checkpoint existing devcontainer files"
+decomk init -f -conf-uri git:<your-shared-conf-repo-url>
+git difftool -- .devcontainer/devcontainer.json .devcontainer/postCreateCommand.sh
+```
+
+## Stage-0 template ownership
+
+Canonical sources:
+
+- `cmd/decomk/templates/devcontainer.json.tmpl`
+- `cmd/decomk/templates/postCreateCommand.sh.tmpl`
+
+Generated copies:
+
+- `examples/devcontainer/devcontainer.json`
+- `examples/devcontainer/postCreateCommand.sh`
+- `examples/decomk-selftest/devpod-local/workspace-template/.devcontainer/devcontainer.json`
+- `examples/decomk-selftest/devpod-local/workspace-template/.devcontainer/postCreateCommand.sh`
+
+Regenerate/check:
+
+```bash
+make generate
+make check-generated
+```
+
+## Key stage-0 environment contract
+
+Primary stage-0 vars in `devcontainer.json`:
+
+- `DECOMK_TOOL_URI` — tool source (`go:` or `git:` URI)
+- `DECOMK_CONF_URI` — config source (`git:` URI)
+- `DECOMK_HOME` — state root (default `/var/decomk`)
+- `DECOMK_LOG_DIR` — run-log root (default `/var/log/decomk`)
+- `DECOMK_RUN_ARGS` — action args passed to `decomk run`
+
+Legacy variable-name migration mapping is documented in:
+
+- `TODO/001-decomk-devcontainer-tool-bootstrap.md` (`Legacy stage-0 variable migration mapping`)
+
+## Run/plan quick examples
+
+```bash
 decomk plan
 decomk run
 ```
 
-After `decomk run`, stamp files exist under the printed `stampDir`, e.g.:
-```text
-/var/decomk/stamps/
-  Block00_base        (stamp files created by make file targets)
-  Block10_common
-  Block20_go
+With explicit local files for experimentation:
+
+```bash
+DECOMK_HOME=/tmp/decomk \
+  decomk plan -config ./decomk.conf -makefile ./Makefile -context myrepo
+
+DECOMK_HOME=/tmp/decomk DECOMK_LOG_DIR=/tmp/decomk/log \
+  decomk run -config ./decomk.conf -makefile ./Makefile -context myrepo
 ```
 
-The env export file is written to `<DECOMK_HOME>/env.sh`, e.g.:
-```sh
-# generated by decomk; do not edit
-export DECOMK_HOME='/var/decomk'
-export DECOMK_STAMPDIR='/var/decomk/stamps'
-export DECOMK_DEV_USER='devuser'
-export DECOMK_MAKE_USER='root'
-export DECOMK_WORKSPACES='repo1 repo2'
-export DECOMK_CONTEXTS='DEFAULT stevegt/decomk'
-export DECOMK_PACKAGES='Block00_base Block10_common Block20_go'
-...
-```
+`decomk run` writes `<DECOMK_HOME>/env.sh` and runs make in `<DECOMK_HOME>/stamps`.
 
-`env.sh` is not debug-only: decomk builds one canonical env tuple sequence and
-uses it for both `env.sh` generation and make invocation, so make and child
-processes receive the same effective values.
-This includes `PATH`: if a tuple sets `PATH=...`, that value applies to make
-launcher resolution and to recipe child processes.
+## Logging and state defaults
+
+- state root: `/var/decomk` (override `DECOMK_HOME` / `-home`)
+- run logs: `/var/log/decomk` (override `DECOMK_LOG_DIR` / `-log-dir`)
+- default log-root fallback: `<DECOMK_HOME>/log` when default `/var/log/decomk` is not writable
 
 ## Concepts
 
@@ -499,7 +464,8 @@ ARGS:
   -home <abs-path>          DECOMK_HOME value in devcontainer.json
   -log-dir <abs-path>       DECOMK_LOG_DIR value in devcontainer.json
   -run-args <string>        DECOMK_RUN_ARGS value in devcontainer.json
-  -force                    Overwrite existing files when content differs
+  -force                    Overwrite existing stage-0 files even when they already exist
+  -f                        Alias for -force
   -no-prompt                Do not prompt for unset values
 ```
 

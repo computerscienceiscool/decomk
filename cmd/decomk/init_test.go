@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"os"
@@ -31,7 +32,11 @@ func TestRenderInitTemplate_DevcontainerJSON(t *testing.T) {
 	}
 
 	var decoded map[string]any
-	if err := json.Unmarshal(rendered, &decoded); err != nil {
+	renderedWithoutComments, err := stripJSONCLineComments(rendered)
+	if err != nil {
+		t.Fatalf("stripJSONCLineComments() error: %v", err)
+	}
+	if err := json.Unmarshal(renderedWithoutComments, &decoded); err != nil {
 		t.Fatalf("json.Unmarshal() error: %v", err)
 	}
 
@@ -80,16 +85,58 @@ func TestWriteInitStage0_ForcePolicy(t *testing.T) {
 		t.Fatalf("result count: got %d want 2", len(results))
 	}
 
+	if _, err := writeInitStage0(repoRoot, data, false); err == nil {
+		t.Fatalf("writeInitStage0() error: got nil want existing-file error")
+	} else {
+		if !strings.Contains(err.Error(), "-f/-force") {
+			t.Fatalf("error: got %q want force guidance", err.Error())
+		}
+		if !strings.Contains(err.Error(), "git difftool") {
+			t.Fatalf("error: got %q want git difftool guidance", err.Error())
+		}
+	}
+
 	devcontainerPath := filepath.Join(repoRoot, ".devcontainer", "devcontainer.json")
 	if err := os.WriteFile(devcontainerPath, []byte(`{"broken":true}`), 0o644); err != nil {
 		t.Fatalf("WriteFile(devcontainerPath): %v", err)
 	}
 
-	if _, err := writeInitStage0(repoRoot, data, false); err == nil {
-		t.Fatalf("writeInitStage0() error: got nil want conflict error")
-	}
 	if _, err := writeInitStage0(repoRoot, data, true); err != nil {
 		t.Fatalf("writeInitStage0(force=true) error: %v", err)
+	}
+}
+
+func TestWriteInitStage0_FailsIfEitherTargetExists(t *testing.T) {
+	t.Parallel()
+
+	repoRoot := t.TempDir()
+	devcontainerDir := filepath.Join(repoRoot, ".devcontainer")
+	if err := os.MkdirAll(devcontainerDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(devcontainerDir): %v", err)
+	}
+
+	jsonPath := filepath.Join(devcontainerDir, "devcontainer.json")
+	if err := os.WriteFile(jsonPath, []byte(`{"name":"existing"}`), 0o644); err != nil {
+		t.Fatalf("WriteFile(devcontainer.json): %v", err)
+	}
+
+	data := stage0.DevcontainerTemplateData{
+		Name:              "repo",
+		ConfURI:           "git:https://example.com/conf.git",
+		ToolURI:           "go:github.com/stevegt/decomk/cmd/decomk@stable",
+		Home:              "/var/decomk",
+		LogDir:            "/var/log/decomk",
+		DecomkRunArgs:     "all",
+		PostCreateCommand: stage0.DefaultPostCreateCommand,
+	}
+
+	if _, err := writeInitStage0(repoRoot, data, false); err == nil {
+		t.Fatalf("writeInitStage0() error: got nil want existing-file error")
+	}
+
+	postCreatePath := filepath.Join(devcontainerDir, "postCreateCommand.sh")
+	if _, err := os.Stat(postCreatePath); !os.IsNotExist(err) {
+		t.Fatalf("postCreateCommand.sh should remain missing; err=%v", err)
 	}
 }
 
@@ -138,6 +185,54 @@ func TestCmdInit_NoPromptWritesFiles(t *testing.T) {
 	}
 	if info.Mode().Perm()&0o111 == 0 {
 		t.Fatalf("postCreateCommand.sh should be executable; mode=%#o", info.Mode().Perm())
+	}
+}
+
+func TestCmdInit_ForceAliasF(t *testing.T) {
+	t.Parallel()
+
+	repoRoot := t.TempDir()
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	baseArgs := []string{
+		"-no-prompt",
+		"-repo-root", repoRoot,
+		"-name", "myrepo",
+		"-conf-uri", "git:https://example.com/conf.git",
+		"-tool-uri", "go:github.com/stevegt/decomk/cmd/decomk@stable",
+		"-home", "/var/decomk",
+		"-log-dir", "/var/log/decomk",
+		"-run-args", "all",
+	}
+
+	code, err := cmdInit(baseArgs, &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("first cmdInit() error: %v", err)
+	}
+	if code != 0 {
+		t.Fatalf("first cmdInit() code: got %d want 0", code)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code, err = cmdInit(baseArgs, &stdout, &stderr)
+	if err == nil {
+		t.Fatalf("second cmdInit() error: got nil want existing-file error")
+	}
+	if code != 1 {
+		t.Fatalf("second cmdInit() code: got %d want 1", code)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	forceArgs := append([]string(nil), baseArgs...)
+	forceArgs = append(forceArgs, "-f")
+	code, err = cmdInit(forceArgs, &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("forced cmdInit() error: %v", err)
+	}
+	if code != 0 {
+		t.Fatalf("forced cmdInit() code: got %d want 0", code)
 	}
 }
 
@@ -296,4 +391,20 @@ func TestWriteFileAtomic_PreservesFileOnFailure(t *testing.T) {
 	if string(got) != "original" {
 		t.Fatalf("existing file changed unexpectedly: got %q want %q", string(got), "original")
 	}
+}
+
+func stripJSONCLineComments(content []byte) ([]byte, error) {
+	scanner := bufio.NewScanner(bytes.NewReader(content))
+	lines := make([]string, 0)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(strings.TrimSpace(line), "//") {
+			continue
+		}
+		lines = append(lines, line)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return []byte(strings.Join(lines, "\n")), nil
 }

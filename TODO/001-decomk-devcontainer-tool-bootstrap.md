@@ -92,6 +92,15 @@ Constraints: Tool URI must accept `go:` and `git:` forms; config URI must accept
 Affects: `stage0/stage0.go`, `cmd/decomk/init.go`, `cmd/decomk/init_test.go`, `cmd/decomk/templates/*`, generated `examples/devcontainer/*`, generated selftest workspace templates, `README.md`.
 Supersedes: DI-001-20260311-163942, DI-001-20260311-175002
 
+ID: DI-001-20260412-194342
+Date: 2026-04-12 19:43:42
+Status: active
+Decision: Make `decomk init` refuse to write when either target stage-0 file already exists unless `-force`/`-f` is set; when refusing, do not emit alternate files and instead print a commit/force/difftool reconciliation workflow. Also add non-edit banners to stage-0 templates and reorganize README around decomk philosophy + shared-conf onboarding.
+Intent: Keep stage-0 adoption safe by default (no implicit overwrite), force explicit user intent for replacement, and provide one clear reconciliation path while making docs and generated file ownership unambiguous.
+Constraints: Existing files must remain untouched in non-force mode even when one file is missing; no temp merge artifacts; `-f` must alias `-force`; README must link (not duplicate) legacy variable migration mapping.
+Affects: `cmd/decomk/init.go`, `cmd/decomk/init_test.go`, `cmd/decomk/templates/devcontainer.json.tmpl`, `cmd/decomk/templates/postCreateCommand.sh.tmpl`, generated `examples/devcontainer/*`, generated selftest workspace templates, `README.md`, `TODO/001-decomk-devcontainer-tool-bootstrap.md`.
+Supersedes: DI-001-20260311-161825
+
 ## Goal
 
 Create an isconf-inspired “context -> target groups + vars”
@@ -324,3 +333,16 @@ Pragmatic MVP: define a small set of **capability groups**, then compose per-rep
 - [x] 001.11 Generate example scaffold files from canonical templates and enforce sync via `go generate`/tests.
 - [x] 001.12 Make the production example devcontainer standalone by including a Dockerfile build entry and companion Dockerfile.
 - [ ] 001.13 Add optional derived `env.mk` output generated from the same canonical env tuple sequence as `env.sh` (without making `env.mk` the source of truth).
+- [x] 001.14 Add strict non-overwrite defaults to `decomk init` (fail unless `-f`/`-force` when target files exist) and provide explicit commit/force/difftool reconciliation guidance.
+- [x] 001.15 Add stage-0 template ownership banners and README onboarding reorganization, plus a canonical legacy-variable migration mapping section.
+
+## Legacy stage-0 variable migration mapping
+
+The canonical stage-0 contract is URI-based (`DECOMK_TOOL_URI`, `DECOMK_CONF_URI`).
+If you are migrating from older examples, use this mapping:
+
+| Legacy variable/flag | New variable/flag | Notes |
+| --- | --- | --- |
+| `DECOMK_CONF_REPO` / `-conf-repo` | `DECOMK_CONF_URI` / `-conf-uri` | Use `git:<repo-url>[?ref=<git-ref>]`. |
+| `DECOMK_TOOL_REPO` + `DECOMK_TOOL_MODE=clone` | `DECOMK_TOOL_URI=git:<repo-url>[?ref=<git-ref>]` | Clone/pull + `go install ./cmd/decomk` behavior is selected by `git:` URI. |
+| `DECOMK_TOOL_INSTALL_PKG` + `DECOMK_TOOL_MODE=install` | `DECOMK_TOOL_URI=go:<module>@<version>` | Install-first behavior is selected by `go:` URI. |

@@ -169,7 +169,8 @@ func addInitFlags(fs *flag.FlagSet, f *initFlags) {
 	fs.StringVar(&f.home, "home", f.home, "DECOMK_HOME value for devcontainer.json")
 	fs.StringVar(&f.logDir, "log-dir", f.logDir, "DECOMK_LOG_DIR value for devcontainer.json")
 	fs.StringVar(&f.runArgs, "run-args", f.runArgs, "DECOMK_RUN_ARGS value for devcontainer.json")
-	fs.BoolVar(&f.force, "force", false, "overwrite existing files when content differs")
+	fs.BoolVar(&f.force, "force", false, "overwrite existing stage-0 files even when they already exist")
+	fs.BoolVar(&f.force, "f", false, "alias for -force")
 	fs.BoolVar(&f.noPrompt, "no-prompt", false, "disable interactive prompts for unset values")
 }
 
@@ -284,15 +285,30 @@ func writeInitStage0(repoRoot string, data stage0.DevcontainerTemplateData, forc
 		return nil, err
 	}
 
-	var results []initWriteResult
 	jsonPath := filepath.Join(devcontainerDir, "devcontainer.json")
+	postCreatePath := filepath.Join(devcontainerDir, "postCreateCommand.sh")
+
+	if !force {
+		// Intent: Keep `decomk init` conservative by default: never overwrite or
+		// partially scaffold when either stage-0 file already exists, and force users
+		// onto an explicit commit/force/difftool reconciliation workflow.
+		// Source: DI-001-20260412-194342 (TODO/001)
+		existing, err := existingInitTargets(jsonPath, postCreatePath)
+		if err != nil {
+			return nil, err
+		}
+		if len(existing) > 0 {
+			return nil, initExistingTargetsError(existing)
+		}
+	}
+
+	var results []initWriteResult
 	jsonStatus, err := writeInitFile(jsonPath, devcontainerJSON, 0o644, force)
 	if err != nil {
 		return nil, err
 	}
 	results = append(results, initWriteResult{Path: jsonPath, Status: jsonStatus})
 
-	postCreatePath := filepath.Join(devcontainerDir, "postCreateCommand.sh")
 	scriptStatus, err := writeInitFile(postCreatePath, postCreateScript, 0o755, force)
 	if err != nil {
 		return nil, err
@@ -306,8 +322,8 @@ func writeInitStage0(repoRoot string, data stage0.DevcontainerTemplateData, forc
 //
 // Status values:
 //   - "created": file did not exist
-//   - "updated": file existed and content changed (requires -force)
-//   - "unchanged": file existed with identical content
+//   - "updated": file existed and content changed (force mode)
+//   - "unchanged": file existed with identical content (force mode)
 func writeInitFile(path string, content []byte, mode os.FileMode, force bool) (status string, err error) {
 	_, statErr := os.Stat(path)
 	existed := statErr == nil
@@ -327,7 +343,7 @@ func writeInitFile(path string, content []byte, mode os.FileMode, force bool) (s
 			return "unchanged", nil
 		}
 		if !force {
-			return "", fmt.Errorf("file exists with different content: %s (use -force to overwrite)", path)
+			return "", fmt.Errorf("file exists with different content: %s (use -f/-force to overwrite)", path)
 		}
 	}
 
@@ -342,4 +358,38 @@ func writeInitFile(path string, content []byte, mode os.FileMode, force bool) (s
 		return "updated", nil
 	}
 	return "created", nil
+}
+
+// existingInitTargets reports which init targets already exist.
+func existingInitTargets(paths ...string) ([]string, error) {
+	existing := make([]string, 0, len(paths))
+	for _, path := range paths {
+		_, err := os.Stat(path)
+		if err == nil {
+			existing = append(existing, path)
+			continue
+		}
+		if os.IsNotExist(err) {
+			continue
+		}
+		return nil, fmt.Errorf("stat %s: %w", path, err)
+	}
+	return existing, nil
+}
+
+// initExistingTargetsError formats the strict non-force guidance for existing
+// stage-0 files.
+func initExistingTargetsError(existing []string) error {
+	var builder strings.Builder
+	builder.WriteString("refusing to overwrite existing stage-0 file(s) without -f/-force:\n")
+	for _, path := range existing {
+		builder.WriteString("  - ")
+		builder.WriteString(path)
+		builder.WriteString("\n")
+	}
+	builder.WriteString("recommended workflow:\n")
+	builder.WriteString("  1) git commit the current .devcontainer files\n")
+	builder.WriteString("  2) run decomk init -f ...\n")
+	builder.WriteString("  3) resolve with: git difftool -- .devcontainer/devcontainer.json .devcontainer/postCreateCommand.sh")
+	return errors.New(builder.String())
 }
