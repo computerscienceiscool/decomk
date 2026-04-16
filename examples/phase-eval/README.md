@@ -22,6 +22,7 @@ across:
 - `devpod build`,
 - `devpod up`,
 - Codespaces prebuild-list/API visibility,
+- Codespaces prebuild workflow trigger/wait/log capture,
 - Codespaces create/start behavior.
 
 ## Files
@@ -41,6 +42,7 @@ Key files:
 
 - `summary.json`
 - `raw/*.stdout.log`, `raw/*.stderr.log`, `raw/*.rc`
+- `codespaces-prebuild.events.log` (when Codespaces prebuild logs contain hook markers)
 - `scenario-notes.tsv`
 - `diagnostics.complete`
 
@@ -75,9 +77,11 @@ examples/phase-eval/run.sh --keep-on-fail
 - DevPod + Docker for DevPod scenarios.
 - `gh` auth for Codespaces scenarios.
 - Repository branch pushed for Codespaces create checks.
+- Codespaces prebuilds configured for the repo (the harness triggers the prebuild workflow and waits for completion).
+- `.devcontainer/phase-eval/devcontainer.json` committed on the evaluated branch (Codespaces resolves this path from remote repo contents).
 
 ## Interpretation
 
 This spike intentionally favors explicit evidence over assumptions. If a platform
-API is unavailable, the run records that condition in artifacts rather than
-silently treating it as success.
+API is unavailable, the run records that condition in artifacts and exits
+non-zero for the requested platform evaluation.

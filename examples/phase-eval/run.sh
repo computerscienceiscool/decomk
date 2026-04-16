@@ -33,6 +33,7 @@ branch=""
 out_dir=""
 keep_on_fail="false"
 cleanup_on_success="false"
+codespaces_devcontainer_path=".devcontainer/phase-eval/devcontainer.json"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -253,6 +254,13 @@ resolve_codespace_name() {
   return 1
 }
 
+remote_repo_file_exists() {
+  local repo="$1"
+  local branch_name="$2"
+  local repo_path="$3"
+  gh api "repos/$repo/contents/$repo_path" --raw-field "ref=$branch_name" >/dev/null 2>&1
+}
+
 wait_for_codespace_ssh() {
   local codespace_name="$1"
   local timeout_seconds="$2"
@@ -267,17 +275,79 @@ wait_for_codespace_ssh() {
   return 1
 }
 
+resolve_prebuild_workflows() {
+  local repo="$1"
+  gh api "repos/$repo/actions/workflows" \
+    --paginate \
+    --jq '.workflows[] | select(.name | test("codespaces prebuild"; "i")) | [.id, .name, .path] | @tsv'
+}
+
+resolve_workflow_run_id_since() {
+  local repo="$1"
+  local workflow_id="$2"
+  local branch_name="$3"
+  local earliest_epoch="$4"
+  local timeout_seconds="$5"
+  local deadline=$((SECONDS + timeout_seconds))
+
+  while ((SECONDS < deadline)); do
+    local run_rows=""
+    if run_rows="$(gh run list -R "$repo" -w "$workflow_id" -b "$branch_name" --limit 20 --json databaseId,createdAt --jq '.[] | [.databaseId, .createdAt] | @tsv' 2>/dev/null)"; then
+      local run_id=""
+      local created_at=""
+      local run_epoch=""
+      while IFS=$'\t' read -r run_id created_at; do
+        if [[ -z "$run_id" || -z "$created_at" ]]; then
+          continue
+        fi
+        if run_epoch="$(date -u -d "$created_at" +%s 2>/dev/null)"; then
+          if [[ "$run_epoch" -ge "$earliest_epoch" ]]; then
+            printf '%s\n' "$run_id"
+            return 0
+          fi
+        fi
+      done <<<"$run_rows"
+    fi
+    sleep 5
+  done
+
+  return 1
+}
+
+sanitize_devpod_workspace_id() {
+  local raw="$1"
+  local lowered
+  lowered="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]')"
+  lowered="$(printf '%s' "$lowered" | tr -c 'a-z0-9-' '-')"
+  while [[ "$lowered" == *--* ]]; do
+    lowered="${lowered//--/-}"
+  done
+  lowered="${lowered#-}"
+  lowered="${lowered%-}"
+  if [[ -z "$lowered" ]]; then
+    lowered="phase-eval"
+  fi
+  printf '%s' "$lowered"
+}
+
 ensure_docker_provider_selected() {
+  # Intent: Prefer read-only provider detection first so phase-eval can run in
+  # environments where DevPod is already configured but config files are not
+  # writable by the current process (for example restricted sandboxes).
+  # Source: DI-009-20260415-081704 (TODO/009)
+  if devpod provider list 2>/dev/null | rg -q 'docker'; then
+    return 0
+  fi
+
   if devpod provider use docker >/dev/null 2>&1; then
     return 0
   fi
 
   if devpod provider add docker >/dev/null 2>&1; then
     :
-  else
-    # provider add is not idempotent; selection retry decides outcome.
-    :
   fi
+  # provider add is not idempotent; always retry selection and let the final
+  # provider-use result determine success or failure.
   devpod provider use docker >/dev/null 2>&1
 }
 
@@ -295,6 +365,15 @@ devpod_cleanup_rc=0
 
 codespaces_auth_rc=-1
 codespaces_prebuild_list_rc=-1
+codespaces_prebuild_trigger_rc=-1
+codespaces_prebuild_watch_rc=-1
+codespaces_prebuild_logs_rc=-1
+codespaces_prebuild_workflow_id=""
+codespaces_prebuild_workflow_name=""
+codespaces_prebuild_run_id=""
+codespaces_prebuild_update_content="false"
+codespaces_prebuild_post_create="false"
+codespaces_prebuild_github_user="false"
 codespaces_create_rc=-1
 codespaces_update_content="false"
 codespaces_post_create="false"
@@ -345,7 +424,11 @@ if [[ "$platform" == "devpod" || "$platform" == "both" ]]; then
   workspace_up="$out_dir/workspace-devpod-up"
   mkdir -p "$workspace_up"
   cp -a "$repo_root/." "$workspace_up"
-  devpod_workspace_id="phase-eval-${run_id}-up"
+  # Intent: Ensure generated DevPod workspace IDs always satisfy the provider
+  # naming contract (lowercase letters, digits, dashes), even though run IDs
+  # intentionally include uppercase UTC markers for artifact readability.
+  # Source: DI-009-20260415-081608 (TODO/009)
+  devpod_workspace_id="$(sanitize_devpod_workspace_id "phase-eval-${run_id}-up")"
 
   if run_capture "$out_dir" "devpod_up" \
     devpod up "$workspace_up" \
@@ -400,9 +483,12 @@ if [[ "$platform" == "codespaces" || "$platform" == "both" ]]; then
   need_command git
 
   if [[ -z "$repo_slug" ]]; then
-    append_scenario_note "$out_dir" "codespaces" "repo slug unavailable; skipping codespaces scenarios"
+    append_scenario_note "$out_dir" "codespaces" "repo slug unavailable; codespaces scenarios not evaluated"
     codespaces_auth_rc=99
     codespaces_prebuild_list_rc=99
+    codespaces_prebuild_trigger_rc=99
+    codespaces_prebuild_watch_rc=99
+    codespaces_prebuild_logs_rc=99
     codespaces_create_rc=99
   else
     if run_capture "$out_dir" "codespaces_auth" gh auth status -t; then
@@ -419,6 +505,90 @@ if [[ "$platform" == "codespaces" || "$platform" == "both" ]]; then
         append_scenario_note "$out_dir" "codespaces_prebuild" "prebuild list API unavailable; marking prebuild check inconclusive"
       fi
 
+      # Intent: Explicitly trigger and wait on a Codespaces prebuild workflow so
+      # phase-eval can confirm hook execution during the prebuild lifecycle
+      # instead of inferring behavior from docs or workspace startup side effects.
+      # Source: DI-009-20260415-182322 (TODO/009)
+      prebuild_workflows=""
+      # Intent: Capture workflow discovery output in raw artifacts so missing
+      # prebuild configuration is diagnosable without rerunning under debug.
+      # Source: DI-009-20260415-182210 (TODO/009)
+      if run_capture "$out_dir" "codespaces_prebuild_workflows" resolve_prebuild_workflows "$repo_slug"; then
+        prebuild_workflows="$(cat "$out_dir/raw/codespaces_prebuild_workflows.stdout.log")"
+        if [[ -n "$prebuild_workflows" ]]; then
+          workflow_count="$(printf '%s\n' "$prebuild_workflows" | awk 'NF { count += 1 } END { print count + 0 }')"
+          prebuild_workflow_row=""
+          while IFS= read -r prebuild_workflow_row; do
+            if [[ -n "$prebuild_workflow_row" ]]; then
+              break
+            fi
+          done <<<"$prebuild_workflows"
+
+          prebuild_workflow_path=""
+          IFS=$'\t' read -r codespaces_prebuild_workflow_id codespaces_prebuild_workflow_name prebuild_workflow_path <<<"$prebuild_workflow_row"
+          append_scenario_note "$out_dir" "codespaces_prebuild" "workflow=${codespaces_prebuild_workflow_name:-unknown} id=${codespaces_prebuild_workflow_id:-unknown} path=${prebuild_workflow_path:-unknown} matches=$workflow_count"
+
+          if [[ -z "$codespaces_prebuild_workflow_id" ]]; then
+            codespaces_prebuild_trigger_rc=92
+            append_scenario_note "$out_dir" "codespaces_prebuild" "selected prebuild workflow row had no workflow id"
+          else
+            trigger_started_epoch="$(date -u +%s)"
+            if run_capture "$out_dir" "codespaces_prebuild_trigger" gh workflow run "$codespaces_prebuild_workflow_id" -R "$repo_slug" -r "$branch"; then
+              if codespaces_prebuild_run_id="$(resolve_workflow_run_id_since "$repo_slug" "$codespaces_prebuild_workflow_id" "$branch" "$trigger_started_epoch" 900)"; then
+                append_scenario_note "$out_dir" "codespaces_prebuild" "run_id=$codespaces_prebuild_run_id"
+
+                if run_capture "$out_dir" "codespaces_prebuild_watch" gh run watch "$codespaces_prebuild_run_id" -R "$repo_slug" --interval 15 --exit-status; then
+                  codespaces_prebuild_watch_rc=0
+                else
+                  codespaces_prebuild_watch_rc=$?
+                fi
+
+                if run_capture "$out_dir" "codespaces_prebuild_logs" gh run view "$codespaces_prebuild_run_id" -R "$repo_slug" --log; then
+                  codespaces_prebuild_logs_rc=0
+                else
+                  codespaces_prebuild_logs_rc=$?
+                fi
+
+                if collect_events_from_logs "$out_dir/codespaces-prebuild.events.log" "$out_dir/raw/codespaces_prebuild_logs.stdout.log" "$out_dir/raw/codespaces_prebuild_logs.stderr.log"; then
+                  :
+                else
+                  die "failed to extract codespaces prebuild events"
+                fi
+
+                if event_has_hook "$out_dir/codespaces-prebuild.events.log" "updateContent"; then
+                  codespaces_prebuild_update_content="true"
+                fi
+                if event_has_hook "$out_dir/codespaces-prebuild.events.log" "postCreate"; then
+                  codespaces_prebuild_post_create="true"
+                fi
+                if event_has_nonempty_field "$out_dir/codespaces-prebuild.events.log" "github_user"; then
+                  codespaces_prebuild_github_user="true"
+                fi
+
+                if [[ "$codespaces_prebuild_watch_rc" -eq 0 && "$codespaces_prebuild_logs_rc" -eq 0 ]]; then
+                  codespaces_prebuild_trigger_rc=0
+                elif [[ "$codespaces_prebuild_watch_rc" -ne 0 ]]; then
+                  codespaces_prebuild_trigger_rc="$codespaces_prebuild_watch_rc"
+                else
+                  codespaces_prebuild_trigger_rc="$codespaces_prebuild_logs_rc"
+                fi
+              else
+                codespaces_prebuild_trigger_rc=94
+                append_scenario_note "$out_dir" "codespaces_prebuild" "failed to resolve triggered workflow run id within timeout"
+              fi
+            else
+              codespaces_prebuild_trigger_rc=$?
+            fi
+          fi
+        else
+          codespaces_prebuild_trigger_rc=93
+          append_scenario_note "$out_dir" "codespaces_prebuild" "no Codespaces prebuild workflow found; configure prebuilds first"
+        fi
+      else
+        codespaces_prebuild_trigger_rc=$?
+        append_scenario_note "$out_dir" "codespaces_prebuild" "failed to enumerate prebuild workflows"
+      fi
+
       machine_name=""
       if machine_name="$(resolve_machine_name "" "$repo_slug")"; then
         append_scenario_note "$out_dir" "codespaces_create" "machine=$machine_name"
@@ -428,9 +598,22 @@ if [[ "$platform" == "codespaces" || "$platform" == "both" ]]; then
         codespaces_create_rc=97
       fi
 
-      if [[ "$codespaces_create_rc" -ne 97 ]]; then
+      # Intent: Fail early when the requested devcontainer path is not present
+      # on the remote branch, because `gh codespace create` resolves paths from
+      # GitHub repository contents, not local uncommitted files.
+      # Source: DI-009-20260415-182210 (TODO/009)
+      if [[ "$codespaces_create_rc" -eq -1 ]]; then
+        if remote_repo_file_exists "$repo_slug" "$branch" "$codespaces_devcontainer_path"; then
+          append_scenario_note "$out_dir" "codespaces_create" "remote devcontainer path confirmed: $codespaces_devcontainer_path"
+        else
+          codespaces_create_rc=91
+          append_scenario_note "$out_dir" "codespaces_create" "remote devcontainer path missing on $branch: $codespaces_devcontainer_path (commit+push required)"
+        fi
+      fi
+
+      if [[ "$codespaces_create_rc" -eq -1 ]]; then
         display_name="phase-eval-$run_id"
-        if run_capture "$out_dir" "codespaces_create" gh codespace create -R "$repo_slug" -b "$branch" --machine "$machine_name" --devcontainer-path .devcontainer/phase-eval/devcontainer.json -d "$display_name" --idle-timeout 30m --retention-period 1h --default-permissions; then
+        if run_capture "$out_dir" "codespaces_create" gh codespace create -R "$repo_slug" -b "$branch" --machine "$machine_name" --devcontainer-path "$codespaces_devcontainer_path" -d "$display_name" --idle-timeout 30m --retention-period 1h --default-permissions; then
           codespaces_create_rc=0
         else
           codespaces_create_rc=$?
@@ -502,8 +685,11 @@ if [[ "$platform" == "codespaces" || "$platform" == "both" ]]; then
         fi
       fi
     else
-      append_scenario_note "$out_dir" "codespaces" "gh auth unavailable; skipping codespaces scenarios"
+      append_scenario_note "$out_dir" "codespaces" "gh auth unavailable; codespaces scenarios not evaluated"
       codespaces_prebuild_list_rc=98
+      codespaces_prebuild_trigger_rc=98
+      codespaces_prebuild_watch_rc=98
+      codespaces_prebuild_logs_rc=98
       codespaces_create_rc=98
     fi
   fi
@@ -535,6 +721,17 @@ cat >"$summary_path" <<JSON
     "codespaces_prebuild_list": {
       "rc": $codespaces_prebuild_list_rc
     },
+    "codespaces_prebuild_run": {
+      "rc": $codespaces_prebuild_trigger_rc,
+      "workflow_id": "$(json_string "$codespaces_prebuild_workflow_id")",
+      "workflow_name": "$(json_string "$codespaces_prebuild_workflow_name")",
+      "run_id": "$(json_string "$codespaces_prebuild_run_id")",
+      "updateContent_seen": $(bool_json "$codespaces_prebuild_update_content"),
+      "postCreate_seen": $(bool_json "$codespaces_prebuild_post_create"),
+      "github_user_nonempty": $(bool_json "$codespaces_prebuild_github_user"),
+      "watch_rc": $codespaces_prebuild_watch_rc,
+      "logs_rc": $codespaces_prebuild_logs_rc
+    },
     "codespaces_create": {
       "rc": $codespaces_create_rc,
       "codespace_name": "$(json_string "$codespace_name")",
@@ -552,11 +749,31 @@ JSON
 touch "$out_dir/diagnostics.complete"
 log "summary written: $summary_path"
 
+# Intent: Treat requested-platform gaps as failures so phase-eval cannot report
+# success when lifecycle evidence is missing (for example auth or API skips).
+# Source: DI-009-20260415-182045 (TODO/009)
+overall_rc=0
+if [[ "$platform" == "devpod" || "$platform" == "both" ]]; then
+  if [[ "$devpod_build_rc" -ne 0 || "$devpod_up_rc" -ne 0 ]]; then
+    overall_rc=1
+  fi
+fi
+if [[ "$platform" == "codespaces" || "$platform" == "both" ]]; then
+  if [[ "$codespaces_auth_rc" -ne 0 || "$codespaces_prebuild_trigger_rc" -ne 0 || "$codespaces_create_rc" -ne 0 ]]; then
+    overall_rc=1
+  fi
+fi
+
 if [[ "$cleanup_on_success" == "true" ]]; then
-  if [[ "$devpod_build_rc" -eq 0 && "$devpod_up_rc" -eq 0 && "$codespaces_create_rc" -eq 0 ]]; then
+  if [[ "$overall_rc" -eq 0 ]]; then
     rm -rf "$out_dir"
     log "cleanup complete: removed $out_dir"
   else
     log "--cleanup requested but at least one scenario failed; preserving $out_dir"
   fi
+fi
+
+if [[ "$overall_rc" -ne 0 ]]; then
+  log "phase-eval incomplete or failed; inspect $summary_path and scenario-notes.tsv"
+  exit 1
 fi
