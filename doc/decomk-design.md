@@ -133,12 +133,16 @@ No selector mapping logic is required in `Makefile`; target names are the select
   - `decomk run TUPLE_STAMP_PROBE`
   - `decomk run TUPLE_STAMP_PROBE TUPLE_STAMP_VERIFY`
 
-## 5.2 `postCreateCommand.sh`
+## 5.2 `decomk-stage0.sh`
 
-- Ensures a `decomk` binary is available in `PATH` (install-first default; optional clone mode).
-- Syncs `DECOMK_CONF_URI` (`git:...`) into `${DECOMK_HOME}/conf`.
-- Runs `decomk run ${DECOMK_RUN_ARGS:-all}`.
-- Does not perform selftest marker validation; verification stays in fixture make/scripts plus harness log parsing.
+- `devcontainer.json` lifecycle hooks call one script with explicit phase args:
+  - `updateContentCommand`: `bash .devcontainer/decomk-stage0.sh updateContent`
+  - `postCreateCommand`: `bash .devcontainer/decomk-stage0.sh postCreate`
+- The script ensures a `decomk` binary is available in `PATH` (install-first default; optional clone mode).
+- The script syncs `DECOMK_CONF_URI` (`git:...`) into `${DECOMK_HOME}/conf`.
+- The script resolves phase-aware run args (`DECOMK_UPDATE_CONTENT_RUN_ARGS` / `DECOMK_POST_CREATE_RUN_ARGS`, defaulting to `DECOMK_RUN_ARGS`) and runs:
+  - `decomk run <resolved-args> DECOMK_STAGE0_PHASE=<phase>`
+- The script does not perform selftest marker validation; verification stays in fixture make/scripts plus harness log parsing.
 
 This avoids hardcoded selector-expansion tables in the hook.
 
@@ -155,12 +159,16 @@ Selftest covers the selector forms and stamp behavior exercised by the current h
 3. **Stamp/idempotency sequence**
    - `decomk run TUPLE_STAMP_PROBE`
    - `decomk run TUPLE_STAMP_PROBE TUPLE_STAMP_VERIFY`
+4. **Lifecycle phase probes**
+   - `decomk-stage0.sh updateContent` with `DECOMK_RUN_ARGS=TUPLE_PHASE_UPDATE`
+   - `decomk-stage0.sh postCreate` with `DECOMK_RUN_ARGS=TUPLE_PHASE_POST`
 
 Success criteria:
 
 - required `SELFTEST PASS ...` markers are present in each run's `make.log`,
 - no `SELFTEST FAIL ...` marker appears,
-- stamp probe runs once and stamp verify confirms idempotency.
+- stamp probe runs once and stamp verify confirms idempotency,
+- phase probes confirm `DECOMK_STAGE0_PHASE` routing and GITHUB_USER expectations.
 
 ---
 

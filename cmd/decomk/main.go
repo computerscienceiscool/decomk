@@ -226,7 +226,7 @@ type resolvedPlan struct {
 //
 // Note: plan intentionally avoids bootstrap clone/pull side effects; those are
 // expected to be handled by stage-0 lifecycle tooling (for example
-// postCreateCommand.sh in devcontainers).
+// `.devcontainer/decomk-stage0.sh` hooks in devcontainers).
 //
 // plan may still create <DECOMK_HOME>/stamps if it does not exist (so make -n
 // can run).

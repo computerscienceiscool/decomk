@@ -37,7 +37,7 @@ type initWriteResult struct {
 }
 
 // cmdInit writes stage-0 files .devcontainer/devcontainer.json and
-// .devcontainer/postCreateCommand.sh in the target repo.
+// .devcontainer/decomk-stage0.sh in the target repo.
 //
 // Intent: Keep stage-0 bootstrap setup reproducible and easy for new repos by
 // generating production-identical lifecycle scaffolding directly from the
@@ -133,13 +133,14 @@ func cmdInit(args []string, stdout, stderr io.Writer) (int, error) {
 	// Intent: Keep stage-0 inputs consistent across init and stage0gen.
 	// Source: DI-001-20260312-141200 (TODO/001)
 	data := stage0.DevcontainerTemplateData{
-		Name:              f.name,
-		ConfURI:           f.confURI,
-		ToolURI:           f.toolURI,
-		Home:              f.home,
-		LogDir:            f.logDir,
-		DecomkRunArgs:     f.runArgs,
-		PostCreateCommand: stage0.DefaultPostCreateCommand,
+		Name:                 f.name,
+		ConfURI:              f.confURI,
+		ToolURI:              f.toolURI,
+		Home:                 f.home,
+		LogDir:               f.logDir,
+		DecomkRunArgs:        f.runArgs,
+		UpdateContentCommand: stage0.DefaultUpdateContentCommand,
+		PostCreateCommand:    stage0.DefaultPostCreateCommand,
 	}
 
 	results, err := writeInitStage0(repoRoot, data, f.force)
@@ -148,7 +149,7 @@ func cmdInit(args []string, stdout, stderr io.Writer) (int, error) {
 	}
 
 	if f.confURI == "" {
-		if err := writeLine(stderr, "decomk init: warning: DECOMK_CONF_URI is empty; postCreateCommand.sh will fail until conf/decomk.conf exists locally"); err != nil {
+		if err := writeLine(stderr, "decomk init: warning: DECOMK_CONF_URI is empty; decomk-stage0.sh will fail until conf/decomk.conf exists locally"); err != nil {
 			return 1, err
 		}
 	}
@@ -280,20 +281,20 @@ func writeInitStage0(repoRoot string, data stage0.DevcontainerTemplateData, forc
 	if err != nil {
 		return nil, err
 	}
-	postCreateScript, err := stage0.RenderPostCreateScript(initPostCreateTemplate)
+	stage0Script, err := stage0.RenderStage0Script(initStage0ScriptTemplate)
 	if err != nil {
 		return nil, err
 	}
 
 	jsonPath := filepath.Join(devcontainerDir, "devcontainer.json")
-	postCreatePath := filepath.Join(devcontainerDir, "postCreateCommand.sh")
+	stage0ScriptPath := filepath.Join(devcontainerDir, "decomk-stage0.sh")
 
 	if !force {
 		// Intent: Keep `decomk init` conservative by default: never overwrite or
 		// partially scaffold when either stage-0 file already exists, and force users
 		// onto an explicit commit/force/difftool reconciliation workflow.
 		// Source: DI-001-20260412-194342 (TODO/001)
-		existing, err := existingInitTargets(jsonPath, postCreatePath)
+		existing, err := existingInitTargets(jsonPath, stage0ScriptPath)
 		if err != nil {
 			return nil, err
 		}
@@ -309,11 +310,11 @@ func writeInitStage0(repoRoot string, data stage0.DevcontainerTemplateData, forc
 	}
 	results = append(results, initWriteResult{Path: jsonPath, Status: jsonStatus})
 
-	scriptStatus, err := writeInitFile(postCreatePath, postCreateScript, 0o755, force)
+	scriptStatus, err := writeInitFile(stage0ScriptPath, stage0Script, 0o755, force)
 	if err != nil {
 		return nil, err
 	}
-	results = append(results, initWriteResult{Path: postCreatePath, Status: scriptStatus})
+	results = append(results, initWriteResult{Path: stage0ScriptPath, Status: scriptStatus})
 
 	return results, nil
 }
@@ -390,6 +391,6 @@ func initExistingTargetsError(existing []string) error {
 	builder.WriteString("recommended workflow:\n")
 	builder.WriteString("  1) git commit the current .devcontainer files\n")
 	builder.WriteString("  2) run decomk init -f ...\n")
-	builder.WriteString("  3) resolve with: git difftool -- .devcontainer/devcontainer.json .devcontainer/postCreateCommand.sh")
+	builder.WriteString("  3) resolve with: git difftool -- .devcontainer/devcontainer.json .devcontainer/decomk-stage0.sh")
 	return errors.New(builder.String())
 }

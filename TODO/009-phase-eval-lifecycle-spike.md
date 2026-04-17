@@ -74,6 +74,14 @@ Intent: Prevent false early failures when the built-in Codespaces prebuild workf
 Constraints: Keep explicit non-zero failures when matching prebuild run cannot be found/completed; keep artifact evidence and scenario notes actionable.
 Affects: `examples/phase-eval/run.sh`, `examples/phase-eval/README.md`, `TODO/009-phase-eval-lifecycle-spike.md`.
 
+ID: DI-009-20260416-222400
+Date: 2026-04-16 22:24:00
+Status: active
+Decision: Close the lifecycle spike with an explicit contract: `updateContentCommand` is the prebuild/common phase, `postCreateCommand` is the runtime/user phase, and `GITHUB_USER` is treated as runtime-only user identity data.
+Intent: Lock design decisions to empirical evidence so stage-0 hook behavior is not inferred from docs-only assumptions.
+Constraints: Base conclusions on durable hook artifacts and run summary fields; keep evidence paths in this TODO for auditability.
+Affects: `TODO/009-phase-eval-lifecycle-spike.md`, `TODO/001-decomk-devcontainer-tool-bootstrap.md`, `TODO/006-decomk-user-customization-via-github-user.md`.
+
 ## Goal
 
 Produce reproducible evidence for lifecycle behavior so design decisions about
@@ -102,5 +110,25 @@ Out of scope:
 - [x] 009.8 Add explicit Codespaces prebuild workflow trigger/wait/log capture path.
 - [x] 009.9 Link deferred self-hosting runtime-adaptation follow-up to `TODO/007.14`.
 - [x] 009.10 Add durable phase markers to distinguish prebuild hook execution from first-boot hook execution.
-- [ ] 009.6 Run phase-eval scenarios and record observed behavior summary in this TODO.
-- [ ] 009.7 Use observed results to drive decomk lifecycle redesign decisions (selector mapping + context axes).
+- [x] 009.6 Run phase-eval scenarios and record observed behavior summary in this TODO.
+- [x] 009.7 Use observed results to drive decomk lifecycle redesign decisions (selector mapping + context axes).
+
+## Observed behavior summary
+
+Evidence run:
+- `summary.json`: `/tmp/decomk-phase-eval.20260417T043559Z-3106986/summary.json`
+- persistent hook events: `/tmp/decomk-phase-eval.20260417T043559Z-3106986/codespaces-persistent.events.log`
+
+Observed facts:
+- Prebuild phase emitted `hook=updateContent`, `phase_bucket=prebuild`, and empty `github_user=`.
+- Runtime phase emitted `hook=postCreate`, `phase_bucket=runtime`, and populated `github_user=stevegt`.
+- Summary cross-check shows:
+  - `codespaces_prebuild_run.github_user_nonempty=false`
+  - `codespaces_create.github_user_nonempty=true`
+  - `persistent_prebuild_update_event_seen=true`
+  - `persistent_runtime_postcreate_event_seen=true`
+
+Design conclusion:
+- `updateContentCommand` is the prebuild/common stage.
+- `postCreateCommand` is the runtime/user stage.
+- `GITHUB_USER` is runtime/user-phase identity data and must not be assumed in prebuild.

@@ -101,6 +101,23 @@ Constraints: Existing files must remain untouched in non-force mode even when on
 Affects: `cmd/decomk/init.go`, `cmd/decomk/init_test.go`, `cmd/decomk/templates/devcontainer.json.tmpl`, `cmd/decomk/templates/postCreateCommand.sh.tmpl`, generated `examples/devcontainer/*`, generated selftest workspace templates, `README.md`, `TODO/001-decomk-devcontainer-tool-bootstrap.md`.
 Supersedes: DI-001-20260311-161825
 
+ID: DI-001-20260416-222700
+Date: 2026-04-16 22:27:00
+Status: superseded
+Decision: Split stage-0 lifecycle into two explicit entrypoints by generating `updateContentCommand` and `postCreateCommand` hooks that both call `.devcontainer/decomk-stage0.sh` with phase arguments (`update-content` and `post-create` respectively).
+Intent: Align generated devcontainer contracts with measured Codespaces lifecycle behavior so common/prebuild work and runtime/user work can be reasoned about and tested separately.
+Constraints: Keep one canonical stage-0 template source, keep generated examples/selftests in sync via stage0gen, and preserve explicit, non-silent bootstrap failures.
+Affects: `cmd/decomk/templates/devcontainer.json.tmpl`, `cmd/decomk/templates/decomk-stage0.sh.tmpl`, `stage0/stage0.go`, `cmd/decomk/init*.go`, `cmd/stage0gen/main.go`, generated `examples/devcontainer/*`, generated selftest workspace templates, `examples/decomk-selftest/*`.
+
+ID: DI-001-20260416-223600
+Date: 2026-04-16 22:36:00
+Status: active
+Decision: Use camelCase phase arguments in stage-0 hook invocations (`updateContent`, `postCreate`) instead of kebab-case.
+Intent: Keep lifecycle hook argument naming aligned with devcontainer hook key names (`updateContentCommand`, `postCreateCommand`) to reduce cognitive load.
+Constraints: Preserve two-phase lifecycle behavior, keep `DECOMK_STAGE0_PHASE` values consistent with hook arguments, and update selftest markers/docs accordingly.
+Affects: `stage0/stage0.go`, `cmd/decomk/templates/*`, generated `examples/devcontainer/*`, generated selftest workspace templates, `examples/decomk-selftest/*`, `README.md`, `doc/decomk-design.md`.
+Supersedes: DI-001-20260416-222700
+
 ## Goal
 
 Create an isconf-inspired “context -> target groups + vars”

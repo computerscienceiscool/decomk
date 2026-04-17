@@ -646,14 +646,14 @@ run_args_q="$(printf '%q' "$decomk_run_args")"
 remote_stage0_script="$(cat <<EOF
 set -euo pipefail
 workspace_dir="/workspaces/$repo_basename"
-if [[ ! -f "\$workspace_dir/examples/devcontainer/postCreateCommand.sh" ]]; then
+if [[ ! -f "\$workspace_dir/examples/devcontainer/decomk-stage0.sh" ]]; then
   if ! workspace_dir="\$(find /workspaces -mindepth 1 -maxdepth 2 -type d -name $repo_basename_q | head -n1)"; then
     echo "failed searching /workspaces for repo $repo_basename" >&2
     exit 1
   fi
 fi
-if [[ -z "\$workspace_dir" ]] || [[ ! -f "\$workspace_dir/examples/devcontainer/postCreateCommand.sh" ]]; then
-  echo "unable to locate workspace root containing examples/devcontainer/postCreateCommand.sh" >&2
+if [[ -z "\$workspace_dir" ]] || [[ ! -f "\$workspace_dir/examples/devcontainer/decomk-stage0.sh" ]]; then
+  echo "unable to locate workspace root containing examples/devcontainer/decomk-stage0.sh" >&2
   exit 1
 fi
 cd "\$workspace_dir"
@@ -680,7 +680,7 @@ export DECOMK_LOG_DIR=$decomk_log_dir_q
 export DECOMK_TOOL_URI=$tool_uri_q
 export DECOMK_CONF_URI="\$resolved_conf_uri"
 export DECOMK_RUN_ARGS=$run_args_q
-bash examples/devcontainer/postCreateCommand.sh
+bash examples/devcontainer/decomk-stage0.sh postCreate
 EOF
 )"
 
@@ -731,6 +731,45 @@ EOF
   codespace_bash "$run_script"
 }
 
+run_stage0_phase_with_stage0_env() {
+  local stage0_phase="$1"
+  local stage0_run_args="$2"
+  local github_user_value="$3"
+
+  local stage0_phase_q
+  local stage0_run_args_q
+  local github_user_value_q
+  stage0_phase_q="$(printf '%q' "$stage0_phase")"
+  stage0_run_args_q="$(printf '%q' "$stage0_run_args")"
+  github_user_value_q="$(printf '%q' "$github_user_value")"
+
+  local run_script
+  run_script="$(cat <<EOF
+set -euo pipefail
+workspace_dir="/workspaces/$repo_basename"
+if [[ ! -d "\$workspace_dir" ]]; then
+  if ! workspace_dir="\$(find /workspaces -mindepth 1 -maxdepth 2 -type d -name $repo_basename_q | head -n1)"; then
+    echo "failed searching /workspaces for repo $repo_basename" >&2
+    exit 1
+  fi
+fi
+if [[ -z "\$workspace_dir" ]]; then
+  echo "unable to locate workspace root containing repo $repo_basename" >&2
+  exit 1
+fi
+cd "\$workspace_dir"
+export DECOMK_HOME=$decomk_home_q
+export DECOMK_LOG_DIR=$decomk_log_dir_q
+export DECOMK_TOOL_URI=$tool_uri_q
+export DECOMK_RUN_ARGS=$stage0_run_args_q
+export GITHUB_USER=$github_user_value_q
+bash examples/devcontainer/decomk-stage0.sh $stage0_phase_q
+EOF
+)"
+
+  codespace_bash "$run_script"
+}
+
 if ! run_logged run_decomk_with_stage0_env "TUPLE_STAMP_PROBE"; then
   fail 32 "stamp probe run failed"
 fi
@@ -758,4 +797,42 @@ require_no_fail_markers_or_fail 32
 require_marker_or_fail 32 "SELFTEST PASS stamp-idempotent"
 require_absent_marker_or_fail 32 "SELFTEST PASS stamp-probe-ran"
 
-log "codespaces parity checks passed"
+# Intent: Validate explicit stage-0 phase routing and GITHUB_USER handling by
+# forcing one updateContent run (empty user) and one postCreate run
+# (non-empty user), then asserting dedicated fixture markers.
+# Source: DI-001-20260416-223600 (TODO/001)
+if ! run_logged run_stage0_phase_with_stage0_env "updateContent" "TUPLE_PHASE_UPDATE" ""; then
+  fail 33 "stage-0 updateContent phase run failed"
+fi
+phase_update_log_path="$(latest_make_log_path)"
+if [[ -z "$phase_update_log_path" ]]; then
+  fail 33 "could not find phase-update make.log"
+fi
+if [[ "$phase_update_log_path" == "$stamp_verify_log_path" ]]; then
+  fail 33 "phase-update run reused stamp-verify make.log unexpectedly: $phase_update_log_path"
+fi
+load_make_log_or_fail 33 "$phase_update_log_path"
+require_no_fail_markers_or_fail 33
+require_marker_or_fail 33 "SELFTEST PASS phase-updateContent"
+require_marker_or_fail 33 "SELFTEST PASS github-user-empty-in-updateContent"
+
+runtime_github_user="$(codespace_bash 'printf %s "${GITHUB_USER:-}"')"
+if [[ -z "$runtime_github_user" ]]; then
+  fail 34 "codespace runtime GITHUB_USER is empty; cannot validate postCreate user-phase behavior"
+fi
+if ! run_logged run_stage0_phase_with_stage0_env "postCreate" "TUPLE_PHASE_POST" "$runtime_github_user"; then
+  fail 34 "stage-0 postCreate phase run failed"
+fi
+phase_post_log_path="$(latest_make_log_path)"
+if [[ -z "$phase_post_log_path" ]]; then
+  fail 34 "could not find phase-post make.log"
+fi
+if [[ "$phase_post_log_path" == "$phase_update_log_path" ]]; then
+  fail 34 "phase runs reused the same make.log path unexpectedly: $phase_post_log_path"
+fi
+load_make_log_or_fail 34 "$phase_post_log_path"
+require_no_fail_markers_or_fail 34
+require_marker_or_fail 34 "SELFTEST PASS phase-postCreate"
+require_marker_or_fail 34 "SELFTEST PASS github-user-present-in-postCreate"
+
+log "codespaces parity checks passed (including lifecycle phase checks)"

@@ -43,19 +43,19 @@ func TestGeneratedStage0FilesMatchTemplates(t *testing.T) {
 			},
 		},
 		{
-			name: "example postCreate",
-			path: "examples/devcontainer/postCreateCommand.sh",
+			name: "example stage0 script",
+			path: "examples/devcontainer/decomk-stage0.sh",
 			mode: 0o755,
 			render: func() ([]byte, error) {
-				return stage0.RenderPostCreateScript(initPostCreateTemplate)
+				return stage0.RenderStage0Script(initStage0ScriptTemplate)
 			},
 		},
 		{
-			name: "selftest postCreate",
-			path: "examples/decomk-selftest/devpod-local/workspace-template/.devcontainer/postCreateCommand.sh",
+			name: "selftest stage0 script",
+			path: "examples/decomk-selftest/devpod-local/workspace-template/.devcontainer/decomk-stage0.sh",
 			mode: 0o755,
 			render: func() ([]byte, error) {
-				return stage0.RenderPostCreateScript(initPostCreateTemplate)
+				return stage0.RenderStage0Script(initStage0ScriptTemplate)
 			},
 		},
 	}

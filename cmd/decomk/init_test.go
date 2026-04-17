@@ -17,13 +17,14 @@ func TestRenderInitTemplate_DevcontainerJSON(t *testing.T) {
 	t.Parallel()
 
 	data := stage0.DevcontainerTemplateData{
-		Name:              `repo "alpha"`,
-		ConfURI:           "git:https://example.com/conf.git?ref=prod",
-		ToolURI:           "go:github.com/stevegt/decomk/cmd/decomk@stable",
-		Home:              "/var/decomk",
-		LogDir:            "/var/log/decomk",
-		DecomkRunArgs:     "all INSTALL",
-		PostCreateCommand: stage0.DefaultPostCreateCommand,
+		Name:                 `repo "alpha"`,
+		ConfURI:              "git:https://example.com/conf.git?ref=prod",
+		ToolURI:              "go:github.com/stevegt/decomk/cmd/decomk@stable",
+		Home:                 "/var/decomk",
+		LogDir:               "/var/log/decomk",
+		DecomkRunArgs:        "all INSTALL",
+		UpdateContentCommand: stage0.DefaultUpdateContentCommand,
+		PostCreateCommand:    stage0.DefaultPostCreateCommand,
 	}
 
 	rendered, err := stage0.RenderDevcontainerJSON(initDevcontainerJSONTemplate, data)
@@ -61,6 +62,12 @@ func TestRenderInitTemplate_DevcontainerJSON(t *testing.T) {
 			t.Fatalf("%s: got %#v want %#v", key, got, want)
 		}
 	}
+	if got := decoded["updateContentCommand"]; got != data.UpdateContentCommand {
+		t.Fatalf("updateContentCommand: got %#v want %#v", got, data.UpdateContentCommand)
+	}
+	if got := decoded["postCreateCommand"]; got != data.PostCreateCommand {
+		t.Fatalf("postCreateCommand: got %#v want %#v", got, data.PostCreateCommand)
+	}
 }
 
 func TestWriteInitStage0_ForcePolicy(t *testing.T) {
@@ -68,13 +75,14 @@ func TestWriteInitStage0_ForcePolicy(t *testing.T) {
 
 	repoRoot := t.TempDir()
 	data := stage0.DevcontainerTemplateData{
-		Name:              "repo",
-		ConfURI:           "git:https://example.com/conf.git",
-		ToolURI:           "go:github.com/stevegt/decomk/cmd/decomk@stable",
-		Home:              "/var/decomk",
-		LogDir:            "/var/log/decomk",
-		DecomkRunArgs:     "all",
-		PostCreateCommand: stage0.DefaultPostCreateCommand,
+		Name:                 "repo",
+		ConfURI:              "git:https://example.com/conf.git",
+		ToolURI:              "go:github.com/stevegt/decomk/cmd/decomk@stable",
+		Home:                 "/var/decomk",
+		LogDir:               "/var/log/decomk",
+		DecomkRunArgs:        "all",
+		UpdateContentCommand: stage0.DefaultUpdateContentCommand,
+		PostCreateCommand:    stage0.DefaultPostCreateCommand,
 	}
 
 	results, err := writeInitStage0(repoRoot, data, false)
@@ -121,22 +129,23 @@ func TestWriteInitStage0_FailsIfEitherTargetExists(t *testing.T) {
 	}
 
 	data := stage0.DevcontainerTemplateData{
-		Name:              "repo",
-		ConfURI:           "git:https://example.com/conf.git",
-		ToolURI:           "go:github.com/stevegt/decomk/cmd/decomk@stable",
-		Home:              "/var/decomk",
-		LogDir:            "/var/log/decomk",
-		DecomkRunArgs:     "all",
-		PostCreateCommand: stage0.DefaultPostCreateCommand,
+		Name:                 "repo",
+		ConfURI:              "git:https://example.com/conf.git",
+		ToolURI:              "go:github.com/stevegt/decomk/cmd/decomk@stable",
+		Home:                 "/var/decomk",
+		LogDir:               "/var/log/decomk",
+		DecomkRunArgs:        "all",
+		UpdateContentCommand: stage0.DefaultUpdateContentCommand,
+		PostCreateCommand:    stage0.DefaultPostCreateCommand,
 	}
 
 	if _, err := writeInitStage0(repoRoot, data, false); err == nil {
 		t.Fatalf("writeInitStage0() error: got nil want existing-file error")
 	}
 
-	postCreatePath := filepath.Join(devcontainerDir, "postCreateCommand.sh")
-	if _, err := os.Stat(postCreatePath); !os.IsNotExist(err) {
-		t.Fatalf("postCreateCommand.sh should remain missing; err=%v", err)
+	stage0Path := filepath.Join(devcontainerDir, "decomk-stage0.sh")
+	if _, err := os.Stat(stage0Path); !os.IsNotExist(err) {
+		t.Fatalf("decomk-stage0.sh should remain missing; err=%v", err)
 	}
 }
 
@@ -169,22 +178,22 @@ func TestCmdInit_NoPromptWritesFiles(t *testing.T) {
 		t.Fatalf("stderr: got %q want empty", got)
 	}
 	out := stdout.String()
-	if !strings.Contains(out, "devcontainer.json") || !strings.Contains(out, "postCreateCommand.sh") {
+	if !strings.Contains(out, "devcontainer.json") || !strings.Contains(out, "decomk-stage0.sh") {
 		t.Fatalf("stdout: got %q want both stage-0 paths", out)
 	}
 
 	devcontainerPath := filepath.Join(repoRoot, ".devcontainer", "devcontainer.json")
-	postCreatePath := filepath.Join(repoRoot, ".devcontainer", "postCreateCommand.sh")
+	stage0Path := filepath.Join(repoRoot, ".devcontainer", "decomk-stage0.sh")
 
 	if _, err := os.Stat(devcontainerPath); err != nil {
 		t.Fatalf("Stat(devcontainer.json): %v", err)
 	}
-	info, err := os.Stat(postCreatePath)
+	info, err := os.Stat(stage0Path)
 	if err != nil {
-		t.Fatalf("Stat(postCreateCommand.sh): %v", err)
+		t.Fatalf("Stat(decomk-stage0.sh): %v", err)
 	}
 	if info.Mode().Perm()&0o111 == 0 {
-		t.Fatalf("postCreateCommand.sh should be executable; mode=%#o", info.Mode().Perm())
+		t.Fatalf("decomk-stage0.sh should be executable; mode=%#o", info.Mode().Perm())
 	}
 }
 

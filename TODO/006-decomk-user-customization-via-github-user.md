@@ -1,5 +1,15 @@
 # TODO 006 - decomk: user customization via GITHUB_USER
 
+## Decision Intent Log
+
+ID: DI-006-20260416-222900
+Date: 2026-04-16 22:29:00
+Status: active
+Decision: Treat `GITHUB_USER` as runtime-only identity data and tie user customization to the runtime `postCreate` phase, while reserving `updateContent` for prebuild/common work where `GITHUB_USER` can be empty.
+Intent: Prevent user customization logic from depending on prebuild-time identity that is not consistently available, and keep the lifecycle model explicit for both hosted and self-hosted paths.
+Constraints: Maintain repo/context resolution behavior for shared policy, avoid password prompts, and keep per-user customization optional.
+Affects: `TODO/006-decomk-user-customization-via-github-user.md`, stage-0 lifecycle templates, selftest lifecycle assertions.
+
 Goal: allow per-user customization in devcontainers without requiring every user
 to add stanzas to the shared decomk config repo.
 
@@ -52,4 +62,3 @@ shared config repo.
 - [ ] 006.4 Extend workspace context selection to optionally include `user/<GITHUB_USER>`.
 - [ ] 006.5 Document the feature in `README.md` (layout, precedence, examples).
 - [ ] 006.6 Add unit tests for layering + key selection (no sudo/network).
-

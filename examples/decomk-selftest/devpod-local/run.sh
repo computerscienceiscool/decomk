@@ -231,8 +231,8 @@ run_logged rm -rf "$workspace_copy/.devcontainer"
 run_logged mkdir -p "$workspace_copy/.devcontainer"
 run_logged cp "$template_dir/devcontainer.json" "$workspace_copy/.devcontainer/devcontainer.json"
 run_logged cp "$template_dir/Dockerfile" "$workspace_copy/.devcontainer/Dockerfile"
-run_logged cp "$template_dir/postCreateCommand.sh" "$workspace_copy/.devcontainer/postCreateCommand.sh"
-run_logged chmod +x "$workspace_copy/.devcontainer/postCreateCommand.sh"
+run_logged cp "$template_dir/decomk-stage0.sh" "$workspace_copy/.devcontainer/decomk-stage0.sh"
+run_logged chmod +x "$workspace_copy/.devcontainer/decomk-stage0.sh"
 render_devcontainer_json "$conf_uri" "$tool_uri" "$decomk_run_args" "$workspace_copy/.devcontainer/devcontainer.json"
 
 active_workspaces+=("$workspace_name")
@@ -309,4 +309,31 @@ require_no_fail_markers
 require_marker "SELFTEST PASS stamp-idempotent"
 require_absent_marker "SELFTEST PASS stamp-probe-ran"
 
-log "all required self-test markers found (including stamp checks)"
+# Intent: Exercise both stage-0 phases explicitly with deterministic GITHUB_USER
+# values so selftest validates phase separation and user-identity handling
+# independent of provider-specific hook scheduling.
+# Source: DI-001-20260416-223600 (TODO/001)
+run_logged devpod ssh "$workspace_name" --command "GITHUB_USER= DECOMK_RUN_ARGS=TUPLE_PHASE_UPDATE .devcontainer/decomk-stage0.sh updateContent"
+phase_update_log_path="$(latest_make_log_path)"
+if [[ -z "$phase_update_log_path" ]]; then
+  die "self-test could not find phase-update make.log"
+fi
+mapfile -t make_log_lines < <(devpod ssh "$workspace_name" --command "cat '$phase_update_log_path'")
+require_no_fail_markers
+require_marker "SELFTEST PASS phase-updateContent"
+require_marker "SELFTEST PASS github-user-empty-in-updateContent"
+
+run_logged devpod ssh "$workspace_name" --command "GITHUB_USER=decomk-selftest-dev DECOMK_RUN_ARGS=TUPLE_PHASE_POST .devcontainer/decomk-stage0.sh postCreate"
+phase_post_log_path="$(latest_make_log_path)"
+if [[ -z "$phase_post_log_path" ]]; then
+  die "self-test could not find phase-post make.log"
+fi
+if [[ "$phase_post_log_path" == "$phase_update_log_path" ]]; then
+  die "self-test phase runs reused the same make.log path unexpectedly: $phase_post_log_path"
+fi
+mapfile -t make_log_lines < <(devpod ssh "$workspace_name" --command "cat '$phase_post_log_path'")
+require_no_fail_markers
+require_marker "SELFTEST PASS phase-postCreate"
+require_marker "SELFTEST PASS github-user-present-in-postCreate"
+
+log "all required self-test markers found (including stamp + lifecycle phase checks)"

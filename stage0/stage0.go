@@ -21,9 +21,13 @@ import (
 )
 
 const (
+	// DefaultUpdateContentCommand is the lifecycle hook command used by generated
+	// devcontainer.json files for prebuild/common work.
+	DefaultUpdateContentCommand = "bash .devcontainer/decomk-stage0.sh updateContent"
+
 	// DefaultPostCreateCommand is the lifecycle hook command used by generated
-	// devcontainer.json files.
-	DefaultPostCreateCommand = "bash .devcontainer/postCreateCommand.sh"
+	// devcontainer.json files for runtime/user work.
+	DefaultPostCreateCommand = "bash .devcontainer/decomk-stage0.sh postCreate"
 
 	// DefaultToolURI is the canonical stage-0 tool source expression used when
 	// no explicit DECOMK_TOOL_URI is provided in generated devcontainer files.
@@ -44,24 +48,32 @@ const (
 //   - RemoteUser: emit "remoteUser" only when non-empty.
 //
 // Required sections:
-//   - Name, containerEnv, and postCreateCommand are always emitted.
+//   - Name, containerEnv, updateContentCommand, and postCreateCommand are always emitted.
 type DevcontainerTemplateData struct {
-	Name              string
-	BuildDockerfile   string
-	BuildContext      string
-	RunArgs           []string
-	RemoteUser        string
-	Home              string
-	LogDir            string
-	ToolURI           string
-	ConfURI           string
-	DecomkRunArgs     string
-	PostCreateCommand string
+	Name                 string
+	BuildDockerfile      string
+	BuildContext         string
+	RunArgs              []string
+	RemoteUser           string
+	Home                 string
+	LogDir               string
+	ToolURI              string
+	ConfURI              string
+	DecomkRunArgs        string
+	UpdateContentCommand string
+	PostCreateCommand    string
 }
 
 // EnsureDefaults populates standard defaults for fields that should always have
 // a stable value unless explicitly overridden.
 func (data DevcontainerTemplateData) EnsureDefaults() DevcontainerTemplateData {
+	// Intent: Keep the generated lifecycle contract explicit and phase-aware by
+	// default so `updateContent` and `postCreate` always call stage-0 with an
+	// unambiguous phase argument.
+	// Source: DI-001-20260416-223600 (TODO/001)
+	if data.UpdateContentCommand == "" {
+		data.UpdateContentCommand = DefaultUpdateContentCommand
+	}
 	if data.PostCreateCommand == "" {
 		data.PostCreateCommand = DefaultPostCreateCommand
 	}
@@ -79,16 +91,17 @@ func ProductionExampleDevcontainerData() DevcontainerTemplateData {
 	// box.
 	// Source: DI-001-20260313-183500 (TODO/001)
 	return DevcontainerTemplateData{
-		Name:              "decomk (example; set DECOMK_CONF_URI)",
-		BuildDockerfile:   "Dockerfile",
-		BuildContext:      ".",
-		RemoteUser:        "dev",
-		Home:              "/var/decomk",
-		LogDir:            "/var/log/decomk",
-		ToolURI:           DefaultToolURI,
-		ConfURI:           "",
-		DecomkRunArgs:     "all",
-		PostCreateCommand: DefaultPostCreateCommand,
+		Name:                 "decomk (example; set DECOMK_CONF_URI)",
+		BuildDockerfile:      "Dockerfile",
+		BuildContext:         ".",
+		RemoteUser:           "dev",
+		Home:                 "/var/decomk",
+		LogDir:               "/var/log/decomk",
+		ToolURI:              DefaultToolURI,
+		ConfURI:              "",
+		DecomkRunArgs:        "all",
+		UpdateContentCommand: DefaultUpdateContentCommand,
+		PostCreateCommand:    DefaultPostCreateCommand,
 	}
 }
 
@@ -96,17 +109,18 @@ func ProductionExampleDevcontainerData() DevcontainerTemplateData {
 // examples/decomk-selftest/devpod-local/workspace-template/.devcontainer/devcontainer.json.
 func SelftestDevcontainerData() DevcontainerTemplateData {
 	return DevcontainerTemplateData{
-		Name:              "decomk-selftest-devpod-local",
-		BuildDockerfile:   "Dockerfile",
-		BuildContext:      "..",
-		RunArgs:           []string{"--add-host=host.docker.internal:host-gateway"},
-		RemoteUser:        "dev",
-		Home:              "/tmp/decomk-selftest/home",
-		LogDir:            "/tmp/decomk-selftest/log",
-		ToolURI:           "__DECOMK_TOOL_URI__",
-		ConfURI:           "__DECOMK_CONF_URI__",
-		DecomkRunArgs:     "__DECOMK_RUN_ARGS__",
-		PostCreateCommand: DefaultPostCreateCommand,
+		Name:                 "decomk-selftest-devpod-local",
+		BuildDockerfile:      "Dockerfile",
+		BuildContext:         "..",
+		RunArgs:              []string{"--add-host=host.docker.internal:host-gateway"},
+		RemoteUser:           "dev",
+		Home:                 "/tmp/decomk-selftest/home",
+		LogDir:               "/tmp/decomk-selftest/log",
+		ToolURI:              "__DECOMK_TOOL_URI__",
+		ConfURI:              "__DECOMK_CONF_URI__",
+		DecomkRunArgs:        "__DECOMK_RUN_ARGS__",
+		UpdateContentCommand: DefaultUpdateContentCommand,
+		PostCreateCommand:    DefaultPostCreateCommand,
 	}
 }
 
@@ -141,9 +155,9 @@ func RenderDevcontainerJSON(templateSource string, data DevcontainerTemplateData
 	return RenderTemplate("devcontainer.json", templateSource, data)
 }
 
-// RenderPostCreateScript renders the canonical postCreate template.
-func RenderPostCreateScript(templateSource string) ([]byte, error) {
-	return RenderTemplate("postCreateCommand.sh", templateSource, struct{}{})
+// RenderStage0Script renders the canonical stage-0 lifecycle script template.
+func RenderStage0Script(templateSource string) ([]byte, error) {
+	return RenderTemplate("decomk-stage0.sh", templateSource, struct{}{})
 }
 
 // WriteFileAtomic writes content to path using a same-directory temp file and

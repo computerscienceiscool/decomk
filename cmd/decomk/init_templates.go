@@ -8,8 +8,8 @@ var (
 	//go:embed templates/devcontainer.json.tmpl
 	initDevcontainerJSONTemplate string
 
-	// initPostCreateTemplate is the stage-0 template for .devcontainer/postCreateCommand.sh.
+	// initStage0ScriptTemplate is the stage-0 template for .devcontainer/decomk-stage0.sh.
 	//
-	//go:embed templates/postCreateCommand.sh.tmpl
-	initPostCreateTemplate string
+	//go:embed templates/decomk-stage0.sh.tmpl
+	initStage0ScriptTemplate string
 )

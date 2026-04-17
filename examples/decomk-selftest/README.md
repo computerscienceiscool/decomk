@@ -3,7 +3,7 @@
 This directory contains automated self-test harnesses that validate decomk bootstrap behavior end-to-end across local DevPod and GitHub Codespaces.
 
 Template note:
-- `workspace-template/.devcontainer/devcontainer.json` and `workspace-template/.devcontainer/postCreateCommand.sh` are generated from `cmd/decomk/templates/*`.
+- `workspace-template/.devcontainer/devcontainer.json` and `workspace-template/.devcontainer/decomk-stage0.sh` are generated from `cmd/decomk/templates/*`.
 - Regenerate from repo root with `go generate ./...` (or `make generate`).
 
 ## Current scope
@@ -18,12 +18,17 @@ Template note:
 2. `run.sh` also creates a temporary bare tool repo from the current decomk checkout.
 3. `run.sh` serves both repos over `git://` via a temporary local `git daemon`.
 4. DevPod starts a workspace from `workspace-template/.devcontainer/`.
-5. `postCreateCommand.sh` performs stage-0 bootstrap:
+5. `decomk-stage0.sh` performs stage-0 bootstrap:
    - ensures a `decomk` binary exists in `PATH` (install-first by default; selftest uses clone mode),
    - clone/pull config repo from `DECOMK_CONF_URI`.
-6. `postCreateCommand.sh` runs `decomk run`.
-7. `run.sh` reads container make logs and enforces PASS/FAIL markers.
-8. `run.sh` then runs two explicit stamp regression invocations:
+6. `decomk-stage0.sh` receives explicit lifecycle phase args from `devcontainer.json`:
+   - `updateContentCommand` calls `decomk-stage0.sh updateContent`
+   - `postCreateCommand` calls `decomk-stage0.sh postCreate`
+7. Harnesses run explicit phase probes (`TUPLE_PHASE_UPDATE`, `TUPLE_PHASE_POST`) and assert:
+   - `updateContent` phase marker + empty `GITHUB_USER`,
+   - `postCreate` phase marker + non-empty `GITHUB_USER`.
+8. `run.sh` reads container make logs and enforces PASS/FAIL markers.
+9. `run.sh` then runs two explicit stamp regression invocations:
    - `decomk run TUPLE_STAMP_PROBE`
    - `decomk run TUPLE_STAMP_PROBE TUPLE_STAMP_VERIFY`
 
@@ -126,5 +131,9 @@ because the harness runs all remote checks through `gh codespace ssh`.
 - `SELFTEST PASS stamp-dir-working-dir`
 - `SELFTEST PASS stamp-probe-ran`
 - `SELFTEST PASS stamp-idempotent`
+- `SELFTEST PASS phase-updateContent`
+- `SELFTEST PASS github-user-empty-in-updateContent`
+- `SELFTEST PASS phase-postCreate`
+- `SELFTEST PASS github-user-present-in-postCreate`
 
 Any `SELFTEST FAIL ...` marker is treated as failure.

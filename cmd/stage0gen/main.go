@@ -43,14 +43,14 @@ func run(args []string) error {
 	}
 
 	devcontainerTemplatePath := filepath.Join(absRoot, "cmd", "decomk", "templates", "devcontainer.json.tmpl")
-	postCreateTemplatePath := filepath.Join(absRoot, "cmd", "decomk", "templates", "postCreateCommand.sh.tmpl")
+	stage0TemplatePath := filepath.Join(absRoot, "cmd", "decomk", "templates", "decomk-stage0.sh.tmpl")
 	devcontainerTemplate, err := os.ReadFile(devcontainerTemplatePath)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", devcontainerTemplatePath, err)
 	}
-	postCreateTemplate, err := os.ReadFile(postCreateTemplatePath)
+	stage0Template, err := os.ReadFile(stage0TemplatePath)
 	if err != nil {
-		return fmt.Errorf("read %s: %w", postCreateTemplatePath, err)
+		return fmt.Errorf("read %s: %w", stage0TemplatePath, err)
 	}
 
 	// Intent: Keep production and selftest stage-0 files generated from one canonical
@@ -70,14 +70,14 @@ func run(args []string) error {
 			Kind: "devcontainer",
 		},
 		{
-			Path: filepath.Join(absRoot, "examples", "devcontainer", "postCreateCommand.sh"),
+			Path: filepath.Join(absRoot, "examples", "devcontainer", "decomk-stage0.sh"),
 			Mode: 0o755,
-			Kind: "postCreate",
+			Kind: "stage0Script",
 		},
 		{
-			Path: filepath.Join(absRoot, "examples", "decomk-selftest", "devpod-local", "workspace-template", ".devcontainer", "postCreateCommand.sh"),
+			Path: filepath.Join(absRoot, "examples", "decomk-selftest", "devpod-local", "workspace-template", ".devcontainer", "decomk-stage0.sh"),
 			Mode: 0o755,
-			Kind: "postCreate",
+			Kind: "stage0Script",
 		},
 	}
 
@@ -87,8 +87,8 @@ func run(args []string) error {
 		switch target.Kind {
 		case "devcontainer":
 			rendered, err = stage0.RenderDevcontainerJSON(string(devcontainerTemplate), target.Data)
-		case "postCreate":
-			rendered, err = stage0.RenderPostCreateScript(string(postCreateTemplate))
+		case "stage0Script":
+			rendered, err = stage0.RenderStage0Script(string(stage0Template))
 		default:
 			return fmt.Errorf("unknown output kind %q for %s", target.Kind, target.Path)
 		}

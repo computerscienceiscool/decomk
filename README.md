@@ -8,7 +8,7 @@
 
 - **Policy** lives in shared config (`decomk.conf`): context expansion, tuple values, and default target composition.
 - **Execution graph** lives in a shared `Makefile`: file targets in the stamp directory define idempotent, dependency-ordered work.
-- **Stage-0 lifecycle files** (`.devcontainer/devcontainer.json`, `.devcontainer/postCreateCommand.sh`) are generated scaffolding and should be treated as managed bootstrap wrappers, not as the place to encode per-repo tool policy.
+- **Stage-0 lifecycle files** (`.devcontainer/devcontainer.json`, `.devcontainer/decomk-stage0.sh`) are generated scaffolding and should be treated as managed bootstrap wrappers, not as the place to encode per-repo tool policy.
 
 For deeper design background, see:
 
@@ -79,11 +79,11 @@ decomk init -conf-uri git:<your-shared-conf-repo-url>
 This writes:
 
 - `.devcontainer/devcontainer.json`
-- `.devcontainer/postCreateCommand.sh`
+- `.devcontainer/decomk-stage0.sh`
 
 ### 3) Start/rebuild the devcontainer
 
-The generated post-create hook:
+The generated stage-0 hooks:
 
 1. ensures `decomk` is available in `PATH` from `DECOMK_TOOL_URI`,
 2. syncs config repo from `DECOMK_CONF_URI` into `<DECOMK_HOME>/conf`,
@@ -109,7 +109,7 @@ Recommended reconciliation workflow when files already exist:
 ```bash
 git commit -m "Checkpoint existing devcontainer files"
 decomk init -f -conf-uri git:<your-shared-conf-repo-url>
-git difftool -- .devcontainer/devcontainer.json .devcontainer/postCreateCommand.sh
+git difftool -- .devcontainer/devcontainer.json .devcontainer/decomk-stage0.sh
 ```
 
 ## Stage-0 template ownership
@@ -117,14 +117,14 @@ git difftool -- .devcontainer/devcontainer.json .devcontainer/postCreateCommand.
 Canonical sources:
 
 - `cmd/decomk/templates/devcontainer.json.tmpl`
-- `cmd/decomk/templates/postCreateCommand.sh.tmpl`
+- `cmd/decomk/templates/decomk-stage0.sh.tmpl`
 
 Generated copies:
 
 - `examples/devcontainer/devcontainer.json`
-- `examples/devcontainer/postCreateCommand.sh`
+- `examples/devcontainer/decomk-stage0.sh`
 - `examples/decomk-selftest/devpod-local/workspace-template/.devcontainer/devcontainer.json`
-- `examples/decomk-selftest/devpod-local/workspace-template/.devcontainer/postCreateCommand.sh`
+- `examples/decomk-selftest/devpod-local/workspace-template/.devcontainer/decomk-stage0.sh`
 
 Regenerate/check:
 
@@ -142,6 +142,13 @@ Primary stage-0 vars in `devcontainer.json`:
 - `DECOMK_HOME` — state root (default `/var/decomk`)
 - `DECOMK_LOG_DIR` — run-log root (default `/var/log/decomk`)
 - `DECOMK_RUN_ARGS` — action args passed to `decomk run`
+- `DECOMK_UPDATE_CONTENT_RUN_ARGS` — optional phase-specific args for `updateContent` (defaults to `DECOMK_RUN_ARGS`)
+- `DECOMK_POST_CREATE_RUN_ARGS` — optional phase-specific args for `postCreate` (defaults to `DECOMK_RUN_ARGS`)
+
+Generated lifecycle hooks call one script with explicit phase args:
+
+- `updateContentCommand`: `bash .devcontainer/decomk-stage0.sh updateContent`
+- `postCreateCommand`: `bash .devcontainer/decomk-stage0.sh postCreate`
 
 Legacy variable-name migration mapping is documented in:
 
@@ -253,7 +260,7 @@ the step has succeeded.
    - default: `/workspaces`
 
 4) Stage-0 bootstrap (outside decomk core)
-   - lifecycle tooling (for example `.devcontainer/postCreateCommand.sh`) ensures a `decomk` binary is available in `PATH`:
+   - lifecycle tooling (for example `.devcontainer/decomk-stage0.sh`) ensures a `decomk` binary is available in `PATH`:
      - `DECOMK_TOOL_URI=go:<module>@<version>`: `go install <module>@<version>`
      - `DECOMK_TOOL_URI=git:<repo-url>[?ref=<git-ref>]`: clone/pull repo into `<DECOMK_HOME>/src/decomk`, optionally checkout ref, then `go install ./cmd/decomk`
    - lifecycle tooling syncs `DECOMK_CONF_URI=git:<repo-url>[?ref=<git-ref>]` into `<DECOMK_HOME>/conf`
@@ -502,17 +509,17 @@ install-user-stuff:
 - `/var/decomk` (state) and `/var/log/decomk` (logs) should be writable by the dev user (or override with `DECOMK_HOME`/`DECOMK_LOG_DIR`).
   - In a Dockerfile, you typically want:
     - `RUN mkdir -p /var/decomk /var/log/decomk && chown -R $USER:$USER /var/decomk /var/log/decomk`
-  - Alternatively, use a minimal lifecycle hook to run decomk directly; see `examples/devcontainer/postCreateCommand.sh`.
+  - Alternatively, use a minimal lifecycle hook to run decomk directly; see `examples/devcontainer/decomk-stage0.sh`.
   - That hook performs stage-0 bootstrap by ensuring `decomk` is in `PATH`, syncing `DECOMK_CONF_URI`, then running `decomk`.
 - The repo’s workspace path is host-dependent; prefer using
   `${containerWorkspaceFolder}` in `devcontainer.json` rather than assuming
   `/workspaces/<repo>`.
-- Canonical scaffold sources are `cmd/decomk/templates/devcontainer.json.tmpl` and `cmd/decomk/templates/postCreateCommand.sh.tmpl`.
+- Canonical scaffold sources are `cmd/decomk/templates/devcontainer.json.tmpl` and `cmd/decomk/templates/decomk-stage0.sh.tmpl`.
   - Generated files:
     - `examples/devcontainer/devcontainer.json`
-    - `examples/devcontainer/postCreateCommand.sh`
+    - `examples/devcontainer/decomk-stage0.sh`
     - `examples/decomk-selftest/devpod-local/workspace-template/.devcontainer/devcontainer.json`
-    - `examples/decomk-selftest/devpod-local/workspace-template/.devcontainer/postCreateCommand.sh`
+    - `examples/decomk-selftest/devpod-local/workspace-template/.devcontainer/decomk-stage0.sh`
   - Regenerate with `go generate ./...` (or `make generate`).
 - Companion static example file:
   - `examples/devcontainer/Dockerfile`
@@ -535,7 +542,7 @@ install-user-stuff:
 - Codespaces parity validation lives under `examples/decomk-selftest/codespaces/`.
   - Run:
     - `examples/decomk-selftest/codespaces/run.sh`
-  - The harness creates a fresh Codespace from the pushed branch under test, auto-builds a fixture config repo inside the Codespace, exports stage-0 URI vars, runs `examples/devcontainer/postCreateCommand.sh`, validates PASS/FAIL markers, runs stamp regression checks, then deletes the Codespace unless `--keep-on-fail` is set.
+  - The harness creates a fresh Codespace from the pushed branch under test, auto-builds a fixture config repo inside the Codespace, exports stage-0 URI vars, runs `examples/devcontainer/decomk-stage0.sh postCreate`, validates PASS/FAIL markers, runs stamp regression checks, then deletes the Codespace unless `--keep-on-fail` is set.
   - Local harness artifacts under `/tmp/decomk-codespaces.*` are preserved by default for inspection; pass `--cleanup` to remove them on success.
   - Diagnostics artifacts are explicit and completion-marked:
     - `diagnostics-summary.txt` (step-by-step status)
@@ -557,4 +564,4 @@ install-user-stuff:
 
 - No `status` / `clean` commands yet.
 - Config parser is intentionally minimal (single quotes only; whole-line comments only).
-- Stage-0 bootstrap expects `git` and `go` in the container (`postCreateCommand.sh` installs `decomk`, syncs repos, and runs `decomk`).
+- Stage-0 bootstrap expects `git` and `go` in the container (`decomk-stage0.sh` installs `decomk`, syncs repos, and runs `decomk`).

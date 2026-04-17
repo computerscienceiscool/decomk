@@ -74,3 +74,33 @@ selftest-stamp-verify:
 >fi
 >@echo "SELFTEST PASS stamp-idempotent"
 >@touch $@
+
+# Intent: Validate that stage-0 phase routing is explicit and that user identity
+# checks can distinguish prebuild/common (`updateContent`) from runtime/user
+# (`postCreate`) invocations.
+# Source: DI-001-20260416-223600 (TODO/001)
+selftest-phase-update-content:
+>@if [[ "$${DECOMK_STAGE0_PHASE:-}" != "updateContent" ]]; then \
+>  echo "SELFTEST FAIL phase-expected-updateContent actual=$${DECOMK_STAGE0_PHASE:-<unset>}"; \
+>  exit 1; \
+>fi
+>@if [[ -n "$${GITHUB_USER:-}" ]]; then \
+>  echo "SELFTEST FAIL github-user-expected-empty-in-updateContent actual=$${GITHUB_USER}"; \
+>  exit 1; \
+>fi
+>@echo "SELFTEST PASS phase-updateContent"
+>@echo "SELFTEST PASS github-user-empty-in-updateContent"
+>@touch $@
+
+selftest-phase-post-create:
+>@if [[ "$${DECOMK_STAGE0_PHASE:-}" != "postCreate" ]]; then \
+>  echo "SELFTEST FAIL phase-expected-postCreate actual=$${DECOMK_STAGE0_PHASE:-<unset>}"; \
+>  exit 1; \
+>fi
+>@if [[ -z "$${GITHUB_USER:-}" ]]; then \
+>  echo "SELFTEST FAIL github-user-expected-nonempty-in-postCreate"; \
+>  exit 1; \
+>fi
+>@echo "SELFTEST PASS phase-postCreate"
+>@echo "SELFTEST PASS github-user-present-in-postCreate"
+>@touch $@
