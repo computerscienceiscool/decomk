@@ -1,4 +1,4 @@
-# TODO 009 - phase-eval: empirical lifecycle spike for DevPod/Codespaces
+# TODO 009 - phase-eval: empirical lifecycle spike for devcontainer/DevPod/Codespaces
 
 ## Decision Intent Log
 
@@ -82,6 +82,15 @@ Intent: Lock design decisions to empirical evidence so stage-0 hook behavior is 
 Constraints: Base conclusions on durable hook artifacts and run summary fields; keep evidence paths in this TODO for auditability.
 Affects: `TODO/009-phase-eval-lifecycle-spike.md`, `TODO/001-decomk-devcontainer-tool-bootstrap.md`, `TODO/006-decomk-user-customization-via-github-user.md`.
 
+ID: DI-009-20260418-130656
+Date: 2026-04-18 13:06:56
+Status: active
+Decision: Add devcontainer CLI as a first-class phase-eval platform with two evidence-checked runs (`devcontainer up --prebuild` and `devcontainer up`), and rename the aggregate selector from `both` to `all` (no compatibility alias).
+Intent: Validate lifecycle hook behavior under the reference devcontainer runtime in addition to DevPod/Codespaces so platform conclusions are grounded in direct evidence.
+Constraints: Keep no-silent-failure behavior; gate `devcontainer` success on hook evidence (prebuild must show `updateContent` without `postCreate`, runtime must show `postCreate`); keep summary output machine-readable.
+Affects: `examples/phase-eval/run.sh`, `examples/phase-eval/README.md`, `TODO/009-phase-eval-lifecycle-spike.md`.
+Supersedes: DI-009-20260413-232813
+
 ## Goal
 
 Produce reproducible evidence for lifecycle behavior so design decisions about
@@ -110,6 +119,7 @@ Out of scope:
 - [x] 009.8 Add explicit Codespaces prebuild workflow trigger/wait/log capture path.
 - [x] 009.9 Link deferred self-hosting runtime-adaptation follow-up to `TODO/007.14`.
 - [x] 009.10 Add durable phase markers to distinguish prebuild hook execution from first-boot hook execution.
+- [x] 009.11 Add devcontainer CLI platform evaluation path (`--platform devcontainer`) and rename aggregate selector to `all`.
 - [x] 009.6 Run phase-eval scenarios and record observed behavior summary in this TODO.
 - [x] 009.7 Use observed results to drive decomk lifecycle redesign decisions (selector mapping + context axes).
 

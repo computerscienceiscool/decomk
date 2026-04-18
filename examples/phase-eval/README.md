@@ -1,7 +1,7 @@
 # phase-eval (POC spike)
 
 `examples/phase-eval` is an empirical spike to measure lifecycle behavior across
-DevPod and Codespaces.
+devcontainer CLI, DevPod, and Codespaces.
 
 ## Important scope note
 
@@ -19,6 +19,8 @@ The spike captures evidence for:
 
 across:
 
+- `devcontainer up --prebuild`,
+- `devcontainer up`,
 - `devpod build`,
 - `devpod up`,
 - Codespaces prebuild-list/API visibility,
@@ -42,6 +44,8 @@ Key files:
 
 - `summary.json`
 - `raw/*.stdout.log`, `raw/*.stderr.log`, `raw/*.rc`
+- `devcontainer-prebuild.events.log`
+- `devcontainer-up.events.log`
 - `codespaces-prebuild.events.log` (when Codespaces prebuild logs contain hook markers)
 - `codespaces-persistent.events.log` (durable in-container event history fetched after codespace start)
 - `scenario-notes.tsv`
@@ -52,7 +56,13 @@ Key files:
 From repository root:
 
 ```bash
-examples/phase-eval/run.sh --platform both
+examples/phase-eval/run.sh --platform all
+```
+
+devcontainer CLI only:
+
+```bash
+examples/phase-eval/run.sh --platform devcontainer
 ```
 
 DevPod only:
@@ -76,6 +86,7 @@ examples/phase-eval/run.sh --keep-on-fail
 ## Prerequisites
 
 - DevPod + Docker for DevPod scenarios.
+- devcontainer CLI (`devcontainer`) + Docker for local devcontainer scenarios.
 - `gh` auth for Codespaces scenarios.
 - Repository branch pushed for Codespaces create checks.
 - Codespaces prebuilds configured for the repo (the harness triggers the prebuild workflow and waits for completion).
@@ -94,6 +105,11 @@ The run fails if durable evidence does not show:
 
 - `updateContent` recorded in `phase_bucket=prebuild`
 - `postCreate` recorded in `phase_bucket=runtime`
+
+For `--platform devcontainer`, the harness enforces:
+
+1. A prebuild run (`devcontainer up --prebuild`) where hook evidence must include `updateContent` and must not include `postCreate`.
+2. A runtime run (`devcontainer up`) where hook evidence must include `postCreate`.
 
 ## Interpretation
 

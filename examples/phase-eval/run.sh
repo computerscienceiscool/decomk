@@ -6,10 +6,10 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/../.." && pwd)"
 source "$script_dir/lib.sh"
 
-# Intent: Evaluate lifecycle assumptions empirically across DevPod and
-# Codespaces so decomk stage-0 design decisions can rely on observed behavior
-# instead of platform-documentation inference.
-# Source: DI-009-20260413-232813 (TODO/009)
+# Intent: Evaluate lifecycle assumptions empirically across devcontainer CLI,
+# DevPod, and Codespaces so decomk stage-0 design decisions can rely on
+# observed behavior instead of platform-documentation inference.
+# Source: DI-009-20260418-130656 (TODO/009)
 
 usage() {
   cat <<'USAGE'
@@ -17,7 +17,7 @@ Usage:
   examples/phase-eval/run.sh [options]
 
 Options:
-  --platform devpod|codespaces|both   Platform(s) to evaluate (default: both)
+  --platform devcontainer|devpod|codespaces|all   Platform(s) to evaluate (default: all)
   --repo <owner/repo>                 GitHub repo slug for codespaces checks (default: inferred from origin)
   --branch <name>                     Branch for codespaces checks (default: current branch)
   --out-dir <path>                    Artifact directory (default: /tmp/decomk-phase-eval.<runid>)
@@ -27,7 +27,7 @@ Options:
 USAGE
 }
 
-platform="both"
+platform="all"
 repo_slug=""
 branch=""
 out_dir=""
@@ -76,8 +76,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "$platform" in
-  devpod|codespaces|both) ;;
-  *) die "--platform must be one of: devpod, codespaces, both" ;;
+  devcontainer|devpod|codespaces|all) ;;
+  *) die "--platform must be one of: devcontainer, devpod, codespaces, all" ;;
 esac
 
 run_id="$(date -u '+%Y%m%dT%H%M%SZ')-$$"
@@ -376,6 +376,42 @@ ensure_docker_provider_selected() {
   devpod provider use docker >/dev/null 2>&1
 }
 
+extract_container_id_from_devcontainer_stdout() {
+  local stdout_path="$1"
+  if [[ ! -f "$stdout_path" ]]; then
+    return 1
+  fi
+
+  # Intent: Resolve the container id from any JSON event line that includes
+  # `containerId` so parsing stays stable even when devcontainer emits extra
+  # non-result lines before or after the final status line.
+  # Source: DI-009-20260418-130656 (TODO/009)
+  local container_id=""
+  while IFS= read -r parsed_id; do
+    if [[ -n "$parsed_id" ]]; then
+      container_id="$parsed_id"
+    fi
+  done < <(jq -Rr 'fromjson? | if type == "object" then (.containerId // empty) else empty end' "$stdout_path" 2>/dev/null)
+  if [[ -z "$container_id" ]]; then
+    return 1
+  fi
+  printf '%s\n' "$container_id"
+}
+
+devcontainer_prebuild_rc=-1
+devcontainer_prebuild_container_id=""
+devcontainer_prebuild_update_content="false"
+devcontainer_prebuild_post_create="false"
+devcontainer_prebuild_github_user="false"
+devcontainer_prebuild_cleanup_rc=-1
+
+devcontainer_up_rc=-1
+devcontainer_up_container_id=""
+devcontainer_up_update_content="false"
+devcontainer_up_post_create="false"
+devcontainer_up_github_user="false"
+devcontainer_up_cleanup_rc=-1
+
 devpod_build_rc=-1
 devpod_build_update_content="false"
 devpod_build_post_create="false"
@@ -419,7 +455,131 @@ codespaces_persistent_runtime_postcreate_event="false"
 codespaces_cleanup_rc=0
 codespace_name=""
 
-if [[ "$platform" == "devpod" || "$platform" == "both" ]]; then
+if [[ "$platform" == "devcontainer" || "$platform" == "all" ]]; then
+  need_command devcontainer
+  need_command docker
+  need_command git
+  need_command jq
+
+  # Intent: Evaluate devcontainer CLI lifecycle behavior directly by running one
+  # prebuild-only `up --prebuild` scenario and one normal `up` scenario against
+  # isolated workspace copies.
+  # Source: DI-009-20260418-130656 (TODO/009)
+  devcontainer_prebuild_workspace="$out_dir/workspace-devcontainer-prebuild"
+  mkdir -p "$devcontainer_prebuild_workspace"
+  cp -a "$repo_root/." "$devcontainer_prebuild_workspace"
+  devcontainer_prebuild_config="$devcontainer_prebuild_workspace/.devcontainer/phase-eval/devcontainer.json"
+
+  if run_capture "$out_dir" "devcontainer_prebuild" \
+    devcontainer up \
+    --workspace-folder "$devcontainer_prebuild_workspace" \
+    --config "$devcontainer_prebuild_config" \
+    --prebuild \
+    --log-format json \
+    --remote-env "PHASE_EVAL_RUN_ID=$run_id" \
+    --remote-env "PHASE_EVAL_SCENARIO=devcontainer_prebuild"; then
+    devcontainer_prebuild_rc=0
+  else
+    devcontainer_prebuild_rc=$?
+  fi
+
+  if devcontainer_prebuild_container_id="$(extract_container_id_from_devcontainer_stdout "$out_dir/raw/devcontainer_prebuild.stdout.log")"; then
+    append_scenario_note "$out_dir" "devcontainer_prebuild" "container_id=$devcontainer_prebuild_container_id"
+    if run_capture "$out_dir" "devcontainer_prebuild_fetch_events" docker cp "$devcontainer_prebuild_container_id:/tmp/decomk-phase-eval-hooks/events.log" "$out_dir/devcontainer-prebuild.events.log"; then
+      :
+    else
+      append_scenario_note "$out_dir" "devcontainer_prebuild" "failed to fetch hook events via docker cp"
+    fi
+  else
+    append_scenario_note "$out_dir" "devcontainer_prebuild" "failed to resolve container id from devcontainer output"
+  fi
+
+  if [[ -f "$out_dir/devcontainer-prebuild.events.log" ]]; then
+    if event_has_hook "$out_dir/devcontainer-prebuild.events.log" "updateContent"; then
+      devcontainer_prebuild_update_content="true"
+    fi
+    if event_has_hook "$out_dir/devcontainer-prebuild.events.log" "postCreate"; then
+      devcontainer_prebuild_post_create="true"
+    fi
+    if event_has_nonempty_field "$out_dir/devcontainer-prebuild.events.log" "github_user"; then
+      devcontainer_prebuild_github_user="true"
+    fi
+  fi
+
+  if [[ -n "$devcontainer_prebuild_container_id" ]]; then
+    if [[ "$keep_on_fail" == "true" && "$devcontainer_prebuild_rc" -ne 0 ]]; then
+      append_scenario_note "$out_dir" "devcontainer_prebuild" "container retained due to --keep-on-fail"
+      devcontainer_prebuild_cleanup_rc=0
+    else
+      if run_capture "$out_dir" "devcontainer_prebuild_cleanup" docker rm -f "$devcontainer_prebuild_container_id"; then
+        devcontainer_prebuild_cleanup_rc=0
+      else
+        devcontainer_prebuild_cleanup_rc=$?
+        append_scenario_note "$out_dir" "devcontainer_prebuild" "container cleanup failed"
+      fi
+    fi
+  else
+    devcontainer_prebuild_cleanup_rc=0
+  fi
+
+  devcontainer_up_workspace="$out_dir/workspace-devcontainer-up"
+  mkdir -p "$devcontainer_up_workspace"
+  cp -a "$repo_root/." "$devcontainer_up_workspace"
+  devcontainer_up_config="$devcontainer_up_workspace/.devcontainer/phase-eval/devcontainer.json"
+
+  if run_capture "$out_dir" "devcontainer_up" \
+    devcontainer up \
+    --workspace-folder "$devcontainer_up_workspace" \
+    --config "$devcontainer_up_config" \
+    --log-format json \
+    --remote-env "PHASE_EVAL_RUN_ID=$run_id" \
+    --remote-env "PHASE_EVAL_SCENARIO=devcontainer_up"; then
+    devcontainer_up_rc=0
+  else
+    devcontainer_up_rc=$?
+  fi
+
+  if devcontainer_up_container_id="$(extract_container_id_from_devcontainer_stdout "$out_dir/raw/devcontainer_up.stdout.log")"; then
+    append_scenario_note "$out_dir" "devcontainer_up" "container_id=$devcontainer_up_container_id"
+    if run_capture "$out_dir" "devcontainer_up_fetch_events" docker cp "$devcontainer_up_container_id:/tmp/decomk-phase-eval-hooks/events.log" "$out_dir/devcontainer-up.events.log"; then
+      :
+    else
+      append_scenario_note "$out_dir" "devcontainer_up" "failed to fetch hook events via docker cp"
+    fi
+  else
+    append_scenario_note "$out_dir" "devcontainer_up" "failed to resolve container id from devcontainer output"
+  fi
+
+  if [[ -f "$out_dir/devcontainer-up.events.log" ]]; then
+    if event_has_hook "$out_dir/devcontainer-up.events.log" "updateContent"; then
+      devcontainer_up_update_content="true"
+    fi
+    if event_has_hook "$out_dir/devcontainer-up.events.log" "postCreate"; then
+      devcontainer_up_post_create="true"
+    fi
+    if event_has_nonempty_field "$out_dir/devcontainer-up.events.log" "github_user"; then
+      devcontainer_up_github_user="true"
+    fi
+  fi
+
+  if [[ -n "$devcontainer_up_container_id" ]]; then
+    if [[ "$keep_on_fail" == "true" && "$devcontainer_up_rc" -ne 0 ]]; then
+      append_scenario_note "$out_dir" "devcontainer_up" "container retained due to --keep-on-fail"
+      devcontainer_up_cleanup_rc=0
+    else
+      if run_capture "$out_dir" "devcontainer_up_cleanup" docker rm -f "$devcontainer_up_container_id"; then
+        devcontainer_up_cleanup_rc=0
+      else
+        devcontainer_up_cleanup_rc=$?
+        append_scenario_note "$out_dir" "devcontainer_up" "container cleanup failed"
+      fi
+    fi
+  else
+    devcontainer_up_cleanup_rc=0
+  fi
+fi
+
+if [[ "$platform" == "devpod" || "$platform" == "all" ]]; then
   need_command devpod
   need_command docker
   need_command git
@@ -515,7 +675,7 @@ if [[ "$platform" == "devpod" || "$platform" == "both" ]]; then
   fi
 fi
 
-if [[ "$platform" == "codespaces" || "$platform" == "both" ]]; then
+if [[ "$platform" == "codespaces" || "$platform" == "all" ]]; then
   need_command gh
   need_command git
 
@@ -857,6 +1017,22 @@ cat >"$summary_path" <<JSON
   "platform": "$(json_string "$platform")",
   "artifacts_dir": "$(json_string "$out_dir")",
   "scenarios": {
+    "devcontainer_prebuild": {
+      "rc": $devcontainer_prebuild_rc,
+      "container_id": "$(json_string "$devcontainer_prebuild_container_id")",
+      "updateContent_seen": $(bool_json "$devcontainer_prebuild_update_content"),
+      "postCreate_seen": $(bool_json "$devcontainer_prebuild_post_create"),
+      "github_user_nonempty": $(bool_json "$devcontainer_prebuild_github_user"),
+      "cleanup_rc": $devcontainer_prebuild_cleanup_rc
+    },
+    "devcontainer_up": {
+      "rc": $devcontainer_up_rc,
+      "container_id": "$(json_string "$devcontainer_up_container_id")",
+      "updateContent_seen": $(bool_json "$devcontainer_up_update_content"),
+      "postCreate_seen": $(bool_json "$devcontainer_up_post_create"),
+      "github_user_nonempty": $(bool_json "$devcontainer_up_github_user"),
+      "cleanup_rc": $devcontainer_up_cleanup_rc
+    },
     "devpod_build": {
       "rc": $devpod_build_rc,
       "updateContent_seen": $(bool_json "$devpod_build_update_content"),
@@ -920,12 +1096,20 @@ log "summary written: $summary_path"
 # missing durable phase markers proving prebuild-vs-runtime hook execution).
 # Source: DI-009-20260417-030759 (TODO/009)
 overall_rc=0
-if [[ "$platform" == "devpod" || "$platform" == "both" ]]; then
+if [[ "$platform" == "devcontainer" || "$platform" == "all" ]]; then
+  # Intent: Keep devcontainer platform checks evidence-driven: prebuild must
+  # show updateContent without postCreate, and runtime must show postCreate.
+  # Source: DI-009-20260418-130656 (TODO/009)
+  if [[ "$devcontainer_prebuild_rc" -ne 0 || "$devcontainer_up_rc" -ne 0 || "$devcontainer_prebuild_update_content" != "true" || "$devcontainer_prebuild_post_create" != "false" || "$devcontainer_up_post_create" != "true" ]]; then
+    overall_rc=1
+  fi
+fi
+if [[ "$platform" == "devpod" || "$platform" == "all" ]]; then
   if [[ "$devpod_build_rc" -ne 0 || "$devpod_up_rc" -ne 0 ]]; then
     overall_rc=1
   fi
 fi
-if [[ "$platform" == "codespaces" || "$platform" == "both" ]]; then
+if [[ "$platform" == "codespaces" || "$platform" == "all" ]]; then
   if [[ "$codespaces_auth_rc" -ne 0 || "$codespaces_push_check_rc" -ne 0 || "$codespaces_prebuild_trigger_rc" -ne 0 || "$codespaces_create_rc" -ne 0 || "$codespaces_artifacts_fetch_rc" -ne 0 || "$codespaces_prebuild_marker_present" != "true" || "$codespaces_runtime_postcreate_marker_present" != "true" || "$codespaces_persistent_prebuild_update_event" != "true" || "$codespaces_persistent_runtime_postcreate_event" != "true" ]]; then
     overall_rc=1
   fi
